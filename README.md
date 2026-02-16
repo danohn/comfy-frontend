@@ -29,7 +29,7 @@ npm run build
 
 ## First-Time Setup
 
-On first launch, the app opens Settings and requires:
+On first launch, the app shows a welcome screen, then opens Settings and requires:
 
 1. ComfyUI API base URL (example: `http://your-comfyui-host:8188`)
 2. A workflow JSON file
