@@ -26,11 +26,10 @@ Usage
 
 Workflow-based runs
 
-- This frontend sends the entire ComfyUI workflow JSON (the file `01_get_started_text_to_image.json`) to the API URL you provide, after injecting your prompt into the `CLIPTextEncode` node (`83:27`). The payload is wrapped as `{ "prompt": <workflow> }` to match the ComfyUI `/prompt` route expectations.
+- This frontend sends the entire ComfyUI workflow JSON (default file: `01_get_started_text_to_image.json`) to the API URL you provide. Before sending, it injects your prompt into nodes that look like prompt encoders (for example `CLIPTextEncode` nodes with an `inputs.text` field). The payload is wrapped as `{ "prompt": <workflow> }` to match ComfyUI `/prompt`.
 - The workflow includes a `PreviewImage` node (node 61) that outputs the generated image to the outputs dict (not just saves to disk).
 - The frontend POSTs to `/prompt`, receives a `prompt_id`, then polls `/history/{prompt_id}` every second until the job status shows `completed: true`.
 - Once an image is in the history outputs, the app constructs a `/view` URL to display the generated image from the server's output directory.
-- The frontend is intentionally flexible about response shapes. It handles image blobs, JSON with `image` (base64) or `images` (array) fields, and simple `url` fields. If your ComfyUI REST plugin uses a different schema, update `src/App.jsx` accordingly.
-- If the server returns a base64 string without a data URL prefix, the frontend assumes PNG and prefixes `data:image/png;base64,`.
+- This frontend currently expects ComfyUI's `/prompt` + `/history/{prompt_id}` + `/view` flow. If your backend uses a different response format, update `src/App.jsx`.
 
 Want me to start the dev server here? I can run `npm install` and `npm run dev` for you.

@@ -2,13 +2,52 @@ import React, { useState, useRef } from 'react'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 
 export default function App() {
+  function loadStoredWorkflow() {
+    const saved = localStorage.getItem('comfy_workflow')
+    if (!saved) return defaultWorkflow
+
+    try {
+      const parsed = JSON.parse(saved)
+      if (parsed && typeof parsed === 'object') {
+        return parsed
+      }
+    } catch (_) {
+      // Fall back to default if local storage data is malformed.
+    }
+
+    localStorage.removeItem('comfy_workflow')
+    return defaultWorkflow
+  }
+
+  function injectPromptIntoWorkflow(runGraph, prompt) {
+    let updatedCount = 0
+
+    for (const nodeId of Object.keys(runGraph)) {
+      const node = runGraph[nodeId]
+      if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
+        continue
+      }
+
+      const classType = String(node.class_type || '').toLowerCase()
+      const title = String(node._meta?.title || '').toLowerCase()
+      const hasTextInput = typeof node.inputs.text === 'string'
+      const looksLikePromptNode = classType.includes('cliptextencode') || title.includes('prompt')
+
+      if (hasTextInput && looksLikePromptNode) {
+        node.inputs.text = prompt
+        updatedCount++
+      }
+    }
+
+    return updatedCount
+  }
+
   const [promptText, setPromptText] = useState('')
   const [apiUrl, setApiUrl] = useState(() => {
     return localStorage.getItem('comfy_api_url') || 'http://10.18.20.10:8188'
   })
   const [workflow, setWorkflow] = useState(() => {
-    const saved = localStorage.getItem('comfy_workflow')
-    return saved ? JSON.parse(saved) : defaultWorkflow
+    return loadStoredWorkflow()
   })
   const [workflowName, setWorkflowName] = useState(() => {
     return localStorage.getItem('comfy_workflow_name') || 'Default (Lumina2 Text-to-Image)'
@@ -73,8 +112,9 @@ export default function App() {
 
     try {
       const runGraph = JSON.parse(JSON.stringify(workflow))
-      if (runGraph['83:27'] && runGraph['83:27'].inputs) {
-        runGraph['83:27'].inputs.text = promptText
+      const updatedPromptNodes = injectPromptIntoWorkflow(runGraph, promptText)
+      if (updatedPromptNodes === 0) {
+        throw new Error('No prompt text node found in workflow (expected a CLIPTextEncode-style node with an inputs.text field)')
       }
 
       const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
@@ -105,19 +145,29 @@ export default function App() {
 
       while (!result && attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 1000))
+        attempts++
 
-        const historyRes = await fetch(`${baseUrl}/history/${promptId}`)
-        const history = await historyRes.json()
-
-        if (history[promptId]) {
-          const entry = history[promptId]
-          if (entry.status && entry.status.completed) {
-            result = entry
-            break
+        try {
+          const historyRes = await fetch(`${baseUrl}/history/${promptId}`)
+          if (!historyRes.ok) {
+            setStatusMessage(`Generating... ${attempts}s (retrying after ${historyRes.status})`)
+            continue
           }
+
+          const history = await historyRes.json()
+
+          if (history[promptId]) {
+            const entry = history[promptId]
+            if (entry.status && entry.status.completed) {
+              result = entry
+              break
+            }
+          }
+        } catch (_) {
+          setStatusMessage(`Generating... ${attempts}s (network retry)`)
+          continue
         }
 
-        attempts++
         setStatusMessage(`Generating... ${attempts}s`)
       }
 
@@ -136,7 +186,7 @@ export default function App() {
             const subfolder = imageInfo.subfolder || ''
             const type = imageInfo.type || 'output'
 
-            imageUrl = `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${type}`
+            imageUrl = `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`
             break
           }
         }
