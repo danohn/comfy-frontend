@@ -33,7 +33,10 @@ export default function App() {
     imageSrc,
     error,
     statusMessage,
+    jobHistory,
     setError,
+    clearHistory,
+    showHistoryImage,
     generate,
   } = useGeneration()
 
@@ -237,6 +240,70 @@ export default function App() {
 
         <div className="mt-12 text-center text-sm text-slate-500">
           <p>Connected to: <span className="font-mono text-slate-700">{apiUrl || 'Not configured'}</span></p>
+        </div>
+
+        <div className="w-full max-w-2xl mt-8">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold text-slate-900">Recent Jobs</h3>
+            {jobHistory.length > 0 && (
+              <button
+                type="button"
+                onClick={clearHistory}
+                className="text-xs font-medium text-slate-600 hover:text-slate-900"
+              >
+                Clear history
+              </button>
+            )}
+          </div>
+
+          {jobHistory.length === 0 ? (
+            <div className="border border-slate-200 rounded-lg p-4 text-sm text-slate-500 bg-slate-50">
+              No jobs yet. Generate an image to populate history.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {jobHistory.map((job) => (
+                <div key={job.id} className="border border-slate-200 rounded-lg p-3 bg-white">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-slate-900 break-words">{job.prompt}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {new Date(job.createdAt).toLocaleString()}
+                      </p>
+                      {job.status === 'failed' && job.error && (
+                        <p className="text-xs text-red-700 mt-1 break-words">{job.error}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`px-2 py-1 text-xs rounded-full font-medium ${
+                          job.status === 'success'
+                            ? 'bg-green-100 text-green-700'
+                            : job.status === 'failed'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-blue-100 text-blue-700'
+                        }`}
+                      >
+                        {job.status}
+                      </span>
+                      {job.imageSrc ? (
+                        <button
+                          type="button"
+                          onClick={() => showHistoryImage(job.imageSrc)}
+                          className="shrink-0 rounded-md overflow-hidden border border-slate-200 hover:border-slate-400 transition-colors"
+                          title="Open image preview"
+                        >
+                          <img src={job.imageSrc} alt="Generated thumbnail" className="w-12 h-12 object-cover" />
+                        </button>
+                      ) : (
+                        <div className="w-12 h-12 rounded-md bg-slate-100 border border-slate-200" />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,29 @@
 import { useState } from 'react'
 
+const HISTORY_STORAGE_KEY = 'comfy_job_history'
+const MAX_HISTORY_ITEMS = 20
+
+function loadStoredHistory() {
+  const raw = localStorage.getItem(HISTORY_STORAGE_KEY)
+  if (!raw) return []
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed)) {
+      return parsed
+    }
+  } catch (_) {
+    // Fall through to clearing malformed data.
+  }
+
+  localStorage.removeItem(HISTORY_STORAGE_KEY)
+  return []
+}
+
+function persistHistory(entries) {
+  localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(entries))
+}
+
 function injectPromptIntoWorkflow(runGraph, prompt) {
   let updatedCount = 0
 
@@ -28,6 +52,34 @@ export default function useGeneration() {
   const [imageSrc, setImageSrc] = useState(null)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
+  const [jobHistory, setJobHistory] = useState(() => loadStoredHistory())
+
+  function updateHistory(mutator) {
+    setJobHistory((current) => {
+      const next = mutator(current).slice(0, MAX_HISTORY_ITEMS)
+      persistHistory(next)
+      return next
+    })
+  }
+
+  function addHistoryItem(item) {
+    updateHistory((current) => [item, ...current])
+  }
+
+  function patchHistoryItem(id, patch) {
+    updateHistory((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+  }
+
+  function clearHistory() {
+    setJobHistory([])
+    localStorage.removeItem(HISTORY_STORAGE_KEY)
+  }
+
+  function showHistoryImage(url) {
+    setImageSrc(url)
+    setError(null)
+    setStatusMessage('')
+  }
 
   async function generate({ promptText, apiUrl, workflow, openSettings, onSuccess }) {
     if (!promptText.trim()) return
@@ -46,6 +98,16 @@ export default function useGeneration() {
     setError(null)
     setImageSrc(null)
     setStatusMessage('Queuing job...')
+
+    const historyItemId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+    addHistoryItem({
+      id: historyItemId,
+      prompt: promptText.trim(),
+      status: 'running',
+      createdAt: new Date().toISOString(),
+      imageSrc: null,
+      error: null,
+    })
 
     try {
       const runGraph = JSON.parse(JSON.stringify(workflow))
@@ -72,6 +134,7 @@ export default function useGeneration() {
       if (!promptId) {
         throw new Error('No prompt_id in response')
       }
+      patchHistoryItem(historyItemId, { promptId })
 
       setStatusMessage('Generating...')
 
@@ -126,15 +189,33 @@ export default function useGeneration() {
       }
 
       if (!imageUrl) {
-        setError('Image generation completed but no output found')
+        const message = 'Image generation completed but no output found'
+        setError(message)
+        patchHistoryItem(historyItemId, {
+          status: 'failed',
+          error: message,
+          finishedAt: new Date().toISOString(),
+        })
       } else {
         setImageSrc(imageUrl)
         setStatusMessage('')
+        patchHistoryItem(historyItemId, {
+          status: 'success',
+          imageSrc: imageUrl,
+          error: null,
+          finishedAt: new Date().toISOString(),
+        })
         onSuccess?.()
       }
     } catch (err) {
-      setError(String(err))
+      const message = String(err)
+      setError(message)
       setStatusMessage('')
+      patchHistoryItem(historyItemId, {
+        status: 'failed',
+        error: message,
+        finishedAt: new Date().toISOString(),
+      })
     } finally {
       setIsLoading(false)
     }
@@ -145,7 +226,10 @@ export default function useGeneration() {
     imageSrc,
     error,
     statusMessage,
+    jobHistory,
     setError,
+    clearHistory,
+    showHistoryImage,
     generate,
   }
 }
