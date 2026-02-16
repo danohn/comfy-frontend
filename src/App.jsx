@@ -249,7 +249,7 @@ export default function App() {
                   }
                 }}
                 placeholder="What would you like to generate?"
-                className="w-full px-6 py-4 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-lg"
+                className="w-full px-6 py-4 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-lg"
                 rows="3"
                 disabled={isLoading}
               />
@@ -290,7 +290,7 @@ export default function App() {
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6 border border-slate-200">
             <h2 className="text-2xl font-bold mb-6">Settings</h2>
             
@@ -304,7 +304,7 @@ export default function App() {
                   value={settingsUrl}
                   onChange={(e) => setSettingsUrl(e.target.value)}
                   placeholder="http://10.18.20.10:8188"
-                  className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
+                  className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
                 />
                 <p className="text-xs text-slate-500 mt-2">Enter the base URL without /prompt</p>
               </div>
