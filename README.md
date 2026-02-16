@@ -21,7 +21,8 @@ npm run dev
 
 Usage
 
- - Enter your ComfyUI REST endpoint URL in the **API URL** field. Example endpoint (adjust to your ComfyUI setup): `http://10.18.20.10:8188/prompt`.
+ - On first load, if no ComfyUI API URL is saved in local storage, the app opens Settings and asks for it.
+ - Enter your ComfyUI REST endpoint base URL in Settings (example: `http://your-comfyui-host:8188`).
 - Type a prompt and click **Generate**.
 
 Workflow-based runs

@@ -2,6 +2,16 @@ import React, { useState, useRef } from 'react'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 
 export default function App() {
+  function normalizeApiUrl(url) {
+    return url.trim().replace(/\/prompt\/?$/, '')
+  }
+
+  function loadStoredApiUrl() {
+    const saved = localStorage.getItem('comfy_api_url')
+    if (!saved) return ''
+    return normalizeApiUrl(saved)
+  }
+
   function loadStoredWorkflow() {
     const saved = localStorage.getItem('comfy_workflow')
     if (!saved) return defaultWorkflow
@@ -43,9 +53,7 @@ export default function App() {
   }
 
   const [promptText, setPromptText] = useState('')
-  const [apiUrl, setApiUrl] = useState(() => {
-    return localStorage.getItem('comfy_api_url') || 'http://10.18.20.10:8188'
-  })
+  const [apiUrl, setApiUrl] = useState(() => loadStoredApiUrl())
   const [workflow, setWorkflow] = useState(() => {
     return loadStoredWorkflow()
   })
@@ -56,16 +64,22 @@ export default function App() {
   const [imageSrc, setImageSrc] = useState(null)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
+  const [showSettings, setShowSettings] = useState(() => !loadStoredApiUrl())
   const [settingsUrl, setSettingsUrl] = useState(apiUrl)
   const fileInputRef = useRef(null)
+  const hasConfiguredApiUrl = apiUrl.length > 0
 
   function saveApiUrl(url) {
-    const cleanUrl = url.replace(/\/prompt\/?$/, '')
+    const cleanUrl = normalizeApiUrl(url)
+    if (!cleanUrl) {
+      setError('Please enter your ComfyUI API URL before continuing')
+      return
+    }
     setApiUrl(cleanUrl)
     setSettingsUrl(cleanUrl)
     localStorage.setItem('comfy_api_url', cleanUrl)
     setShowSettings(false)
+    setError(null)
   }
 
   function handleWorkflowUpload(e) {
@@ -104,6 +118,11 @@ export default function App() {
   async function handleGenerate(e) {
     e?.preventDefault()
     if (!promptText.trim()) return
+    if (!hasConfiguredApiUrl) {
+      setError('Configure your ComfyUI API URL in Settings to generate images')
+      setShowSettings(true)
+      return
+    }
 
     setIsLoading(true)
     setError(null)
@@ -353,7 +372,7 @@ export default function App() {
                   type="text"
                   value={settingsUrl}
                   onChange={(e) => setSettingsUrl(e.target.value)}
-                  placeholder="http://10.18.20.10:8188"
+                  placeholder="http://your-comfyui-host:8188"
                   className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
                 />
                 <p className="text-xs text-slate-500 mt-2">Enter the base URL without /prompt</p>
@@ -367,12 +386,14 @@ export default function App() {
               >
                 Save
               </button>
-              <button
-                onClick={() => setShowSettings(false)}
-                className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 font-semibold rounded-lg hover:bg-slate-300 transition-colors"
-              >
-                Cancel
-              </button>
+              {hasConfiguredApiUrl && (
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 font-semibold rounded-lg hover:bg-slate-300 transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         </div>
