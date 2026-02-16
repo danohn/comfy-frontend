@@ -21,8 +21,9 @@ npm run dev
 
 Usage
 
- - On first load, if no ComfyUI API URL is saved in local storage, the app opens Settings and asks for it.
+ - On first load, if no API URL or workflow is saved in local storage, the app opens Settings onboarding.
  - Enter your ComfyUI REST endpoint base URL in Settings (example: `http://your-comfyui-host:8188`).
+ - Upload your workflow JSON, or click **Use Sample** if you want to start with the bundled sample workflow.
 - Type a prompt and click **Generate**.
 
 Workflow-based runs

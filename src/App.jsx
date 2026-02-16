@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState } from 'react'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 
 export default function App() {
@@ -14,7 +14,7 @@ export default function App() {
 
   function loadStoredWorkflow() {
     const saved = localStorage.getItem('comfy_workflow')
-    if (!saved) return defaultWorkflow
+    if (!saved) return null
 
     try {
       const parsed = JSON.parse(saved)
@@ -26,7 +26,8 @@ export default function App() {
     }
 
     localStorage.removeItem('comfy_workflow')
-    return defaultWorkflow
+    localStorage.removeItem('comfy_workflow_name')
+    return null
   }
 
   function injectPromptIntoWorkflow(runGraph, prompt) {
@@ -58,27 +59,23 @@ export default function App() {
     return loadStoredWorkflow()
   })
   const [workflowName, setWorkflowName] = useState(() => {
-    return localStorage.getItem('comfy_workflow_name') || 'Default (Lumina2 Text-to-Image)'
+    return localStorage.getItem('comfy_workflow_name') || ''
   })
   const [isLoading, setIsLoading] = useState(false)
   const [imageSrc, setImageSrc] = useState(null)
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
-  const [showSettings, setShowSettings] = useState(() => !loadStoredApiUrl())
+  const [showSettings, setShowSettings] = useState(() => !loadStoredApiUrl() || !loadStoredWorkflow())
   const [settingsUrl, setSettingsUrl] = useState(apiUrl)
-  const fileInputRef = useRef(null)
   const hasConfiguredApiUrl = apiUrl.length > 0
+  const hasConfiguredWorkflow = workflow !== null
+  const canCloseSettings = hasConfiguredApiUrl && hasConfiguredWorkflow
 
-  function saveApiUrl(url) {
-    const cleanUrl = normalizeApiUrl(url)
-    if (!cleanUrl) {
-      setError('Please enter your ComfyUI API URL before continuing')
-      return
-    }
-    setApiUrl(cleanUrl)
-    setSettingsUrl(cleanUrl)
-    localStorage.setItem('comfy_api_url', cleanUrl)
-    setShowSettings(false)
+  function saveWorkflow(nextWorkflow, name) {
+    setWorkflow(nextWorkflow)
+    setWorkflowName(name)
+    localStorage.setItem('comfy_workflow', JSON.stringify(nextWorkflow))
+    localStorage.setItem('comfy_workflow_name', name)
     setError(null)
   }
 
@@ -90,28 +87,41 @@ export default function App() {
     reader.onload = (event) => {
       try {
         const json = JSON.parse(event.target.result)
-        setWorkflow(json)
-        setWorkflowName(file.name)
-        localStorage.setItem('comfy_workflow', JSON.stringify(json))
-        localStorage.setItem('comfy_workflow_name', file.name)
-        setError(null)
+        saveWorkflow(json, file.name)
       } catch (err) {
         setError(`Failed to parse JSON: ${err.message}`)
       }
     }
     reader.readAsText(file)
-    
+
     // Clear input so same file can be selected again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    e.target.value = ''
   }
 
-  function resetToDefaultWorkflow() {
-    setWorkflow(defaultWorkflow)
-    setWorkflowName('Default (Lumina2 Text-to-Image)')
-    localStorage.setItem('comfy_workflow', JSON.stringify(defaultWorkflow))
-    localStorage.setItem('comfy_workflow_name', 'Default (Lumina2 Text-to-Image)')
+  function useSampleWorkflow() {
+    saveWorkflow(defaultWorkflow, 'Sample (Lumina2 Text-to-Image)')
+  }
+
+  function openSettings() {
+    setSettingsUrl(apiUrl)
+    setShowSettings(true)
+  }
+
+  function handleSaveSettings() {
+    const cleanUrl = normalizeApiUrl(settingsUrl)
+    if (!cleanUrl) {
+      setError('Please enter your ComfyUI API URL before continuing')
+      return
+    }
+    if (!hasConfiguredWorkflow) {
+      setError('Please upload a workflow JSON or use the sample workflow before continuing')
+      return
+    }
+
+    setApiUrl(cleanUrl)
+    setSettingsUrl(cleanUrl)
+    localStorage.setItem('comfy_api_url', cleanUrl)
+    setShowSettings(false)
     setError(null)
   }
 
@@ -120,7 +130,12 @@ export default function App() {
     if (!promptText.trim()) return
     if (!hasConfiguredApiUrl) {
       setError('Configure your ComfyUI API URL in Settings to generate images')
-      setShowSettings(true)
+      openSettings()
+      return
+    }
+    if (!hasConfiguredWorkflow) {
+      setError('Configure a workflow JSON in Settings to generate images')
+      openSettings()
       return
     }
 
@@ -236,24 +251,25 @@ export default function App() {
           
           {/* Workflow Info */}
           <div className="flex flex-col gap-3 items-center text-sm text-slate-600">
-            <span className="px-3 py-1 bg-slate-100 rounded-full font-medium">{workflowName}</span>
+            <span className="px-3 py-1 bg-slate-100 rounded-full font-medium">
+              {hasConfiguredWorkflow ? workflowName : 'No workflow configured'}
+            </span>
             <div className="flex gap-2">
               <label className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full font-medium cursor-pointer hover:bg-blue-200 transition-colors">
                 📁 Load Workflow
                 <input
-                  ref={fileInputRef}
                   type="file"
                   accept=".json"
                   onChange={handleWorkflowUpload}
                   className="hidden"
                 />
               </label>
-              {workflowName !== 'Default (Lumina2 Text-to-Image)' && (
+              {hasConfiguredWorkflow && (
                 <button
-                  onClick={resetToDefaultWorkflow}
+                  onClick={useSampleWorkflow}
                   className="px-3 py-1 bg-slate-200 text-slate-700 rounded-full font-medium hover:bg-slate-300 transition-colors"
                 >
-                  Reset to Default
+                  Use Sample Workflow
                 </button>
               )}
             </div>
@@ -325,10 +341,7 @@ export default function App() {
               <div className="absolute right-4 bottom-4 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSettingsUrl(apiUrl)
-                    setShowSettings(true)
-                  }}
+                  onClick={openSettings}
                   className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors cursor-pointer"
                   title="Settings"
                 >
@@ -336,7 +349,7 @@ export default function App() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isLoading || !promptText.trim()}
+                  disabled={isLoading || !promptText.trim() || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
                   className="p-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -361,7 +374,12 @@ export default function App() {
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6 border border-slate-200">
-            <h2 className="text-2xl font-bold mb-6">Settings</h2>
+            <h2 className="text-2xl font-bold mb-2">Settings</h2>
+            {!canCloseSettings && (
+              <p className="text-sm text-slate-600 mb-6">
+                Complete setup to continue: add your API URL and workflow JSON.
+              </p>
+            )}
             
             <div className="space-y-4">
               <div>
@@ -377,16 +395,40 @@ export default function App() {
                 />
                 <p className="text-xs text-slate-500 mt-2">Enter the base URL without /prompt</p>
               </div>
+
+              <div>
+                <p className="block text-sm font-semibold text-slate-900 mb-2">Workflow JSON</p>
+                <p className="text-xs text-slate-500 mb-3">
+                  {hasConfiguredWorkflow ? `Selected: ${workflowName}` : 'No workflow selected yet'}
+                </p>
+                <div className="flex gap-2">
+                  <label className="flex-1 px-3 py-2 bg-blue-100 text-blue-700 text-sm text-center rounded-lg font-medium cursor-pointer hover:bg-blue-200 transition-colors">
+                    Upload JSON
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleWorkflowUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    onClick={useSampleWorkflow}
+                    className="flex-1 px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 transition-colors"
+                  >
+                    Use Sample
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-3 mt-6">
               <button
-                onClick={() => saveApiUrl(settingsUrl)}
+                onClick={handleSaveSettings}
                 className="flex-1 px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 transition-colors"
               >
-                Save
+                {canCloseSettings ? 'Save' : 'Save and Continue'}
               </button>
-              {hasConfiguredApiUrl && (
+              {canCloseSettings && (
                 <button
                   onClick={() => setShowSettings(false)}
                   className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 font-semibold rounded-lg hover:bg-slate-300 transition-colors"
