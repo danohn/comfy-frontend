@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  @apply h-full w-full;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
