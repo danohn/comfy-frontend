@@ -1,262 +1,114 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
+import useApiConfig from './hooks/useApiConfig'
+import useWorkflowConfig from './hooks/useWorkflowConfig'
+import useGeneration from './hooks/useGeneration'
 
 export default function App() {
-  function normalizeApiUrl(url) {
-    return url.trim().replace(/\/prompt\/?$/, '')
-  }
-
-  function loadStoredApiUrl() {
-    const saved = localStorage.getItem('comfy_api_url')
-    if (!saved) return ''
-    return normalizeApiUrl(saved)
-  }
-
-  function loadStoredWorkflow() {
-    const saved = localStorage.getItem('comfy_workflow')
-    if (!saved) return null
-
-    try {
-      const parsed = JSON.parse(saved)
-      if (parsed && typeof parsed === 'object') {
-        return parsed
-      }
-    } catch (_) {
-      // Fall back to default if local storage data is malformed.
-    }
-
-    localStorage.removeItem('comfy_workflow')
-    localStorage.removeItem('comfy_workflow_name')
-    return null
-  }
-
-  function injectPromptIntoWorkflow(runGraph, prompt) {
-    let updatedCount = 0
-
-    for (const nodeId of Object.keys(runGraph)) {
-      const node = runGraph[nodeId]
-      if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
-        continue
-      }
-
-      const classType = String(node.class_type || '').toLowerCase()
-      const title = String(node._meta?.title || '').toLowerCase()
-      const hasTextInput = typeof node.inputs.text === 'string'
-      const looksLikePromptNode = classType.includes('cliptextencode') || title.includes('prompt')
-
-      if (hasTextInput && looksLikePromptNode) {
-        node.inputs.text = prompt
-        updatedCount++
-      }
-    }
-
-    return updatedCount
-  }
-
   const [promptText, setPromptText] = useState('')
-  const [apiUrl, setApiUrl] = useState(() => loadStoredApiUrl())
-  const [workflow, setWorkflow] = useState(() => {
-    return loadStoredWorkflow()
-  })
-  const [workflowName, setWorkflowName] = useState(() => {
-    return localStorage.getItem('comfy_workflow_name') || ''
-  })
-  const [isLoading, setIsLoading] = useState(false)
-  const [imageSrc, setImageSrc] = useState(null)
-  const [error, setError] = useState(null)
-  const [statusMessage, setStatusMessage] = useState('')
-  const [showSettings, setShowSettings] = useState(() => !loadStoredApiUrl() || !loadStoredWorkflow())
-  const [settingsUrl, setSettingsUrl] = useState(apiUrl)
-  const hasConfiguredApiUrl = apiUrl.length > 0
-  const hasConfiguredWorkflow = workflow !== null
+  const {
+    apiUrl,
+    settingsUrl,
+    showSettings,
+    isTestingConnection,
+    connectionStatus,
+    hasConfiguredApiUrl,
+    setSettingsUrl,
+    setShowSettings,
+    openSettings,
+    closeSettings,
+    saveApiUrl,
+    testConnection,
+  } = useApiConfig()
+  const {
+    workflow,
+    workflowName,
+    hasConfiguredWorkflow,
+    uploadWorkflowFile,
+    useSampleWorkflow,
+  } = useWorkflowConfig(defaultWorkflow)
+  const {
+    isLoading,
+    imageSrc,
+    error,
+    statusMessage,
+    setError,
+    generate,
+  } = useGeneration()
+
   const canCloseSettings = hasConfiguredApiUrl && hasConfiguredWorkflow
 
-  function saveWorkflow(nextWorkflow, name) {
-    setWorkflow(nextWorkflow)
-    setWorkflowName(name)
-    localStorage.setItem('comfy_workflow', JSON.stringify(nextWorkflow))
-    localStorage.setItem('comfy_workflow_name', name)
-    setError(null)
-  }
+  useEffect(() => {
+    if (!hasConfiguredApiUrl || !hasConfiguredWorkflow) {
+      setShowSettings(true)
+    }
+  }, [hasConfiguredApiUrl, hasConfiguredWorkflow, setShowSettings])
 
-  function handleWorkflowUpload(e) {
+  async function handleWorkflowUpload(e) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target.result)
-        saveWorkflow(json, file.name)
-      } catch (err) {
-        setError(`Failed to parse JSON: ${err.message}`)
-      }
+    try {
+      await uploadWorkflowFile(file)
+      setError(null)
+    } catch (err) {
+      setError(`Failed to parse JSON: ${err.message}`)
+    } finally {
+      e.target.value = ''
     }
-    reader.readAsText(file)
-
-    // Clear input so same file can be selected again
-    e.target.value = ''
   }
 
-  function useSampleWorkflow() {
-    saveWorkflow(defaultWorkflow, 'Sample (Lumina2 Text-to-Image)')
-  }
-
-  function openSettings() {
-    setSettingsUrl(apiUrl)
-    setShowSettings(true)
+  function handleUseSampleWorkflow() {
+    useSampleWorkflow()
+    setError(null)
   }
 
   function handleSaveSettings() {
-    const cleanUrl = normalizeApiUrl(settingsUrl)
-    if (!cleanUrl) {
-      setError('Please enter your ComfyUI API URL before continuing')
+    const saveResult = saveApiUrl(settingsUrl)
+    if (!saveResult.ok) {
+      setError(saveResult.error)
       return
     }
     if (!hasConfiguredWorkflow) {
       setError('Please upload a workflow JSON or use the sample workflow before continuing')
       return
     }
-
-    setApiUrl(cleanUrl)
-    setSettingsUrl(cleanUrl)
-    localStorage.setItem('comfy_api_url', cleanUrl)
-    setShowSettings(false)
+    closeSettings()
     setError(null)
+  }
+
+  async function handleTestConnection() {
+    const result = await testConnection(settingsUrl)
+    if (result.ok) {
+      setError(null)
+    }
   }
 
   async function handleGenerate(e) {
     e?.preventDefault()
-    if (!promptText.trim()) return
-    if (!hasConfiguredApiUrl) {
-      setError('Configure your ComfyUI API URL in Settings to generate images')
-      openSettings()
-      return
-    }
-    if (!hasConfiguredWorkflow) {
-      setError('Configure a workflow JSON in Settings to generate images')
-      openSettings()
-      return
-    }
-
-    setIsLoading(true)
-    setError(null)
-    setImageSrc(null)
-    setStatusMessage('Queuing job...')
-
-    try {
-      const runGraph = JSON.parse(JSON.stringify(workflow))
-      const updatedPromptNodes = injectPromptIntoWorkflow(runGraph, promptText)
-      if (updatedPromptNodes === 0) {
-        throw new Error('No prompt text node found in workflow (expected a CLIPTextEncode-style node with an inputs.text field)')
-      }
-
-      const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
-
-      const payload = { prompt: runGraph }
-      const queueRes = await fetch(`${baseUrl}/prompt`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-
-      if (!queueRes.ok) {
-        throw new Error(`Queue request failed: ${queueRes.status}`)
-      }
-
-      const queueData = await queueRes.json()
-      const promptId = queueData.prompt_id
-
-      if (!promptId) {
-        throw new Error('No prompt_id in response')
-      }
-
-      setStatusMessage('Generating...')
-
-      let result = null
-      let attempts = 0
-      const maxAttempts = 120
-
-      while (!result && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        attempts++
-
-        try {
-          const historyRes = await fetch(`${baseUrl}/history/${promptId}`)
-          if (!historyRes.ok) {
-            setStatusMessage(`Generating... ${attempts}s (retrying after ${historyRes.status})`)
-            continue
-          }
-
-          const history = await historyRes.json()
-
-          if (history[promptId]) {
-            const entry = history[promptId]
-            if (entry.status && entry.status.completed) {
-              result = entry
-              break
-            }
-          }
-        } catch (_) {
-          setStatusMessage(`Generating... ${attempts}s (network retry)`)
-          continue
-        }
-
-        setStatusMessage(`Generating... ${attempts}s`)
-      }
-
-      if (!result) {
-        throw new Error('Timeout waiting for image generation')
-      }
-
-      let imageUrl = null
-
-      if (result.outputs) {
-        for (const nodeId in result.outputs) {
-          const output = result.outputs[nodeId]
-          if (output.images && output.images.length > 0) {
-            const imageInfo = output.images[0]
-            const filename = imageInfo.filename
-            const subfolder = imageInfo.subfolder || ''
-            const type = imageInfo.type || 'output'
-
-            imageUrl = `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`
-            break
-          }
-        }
-      }
-
-      if (!imageUrl) {
-        setError('Image generation completed but no output found')
-      } else {
-        setImageSrc(imageUrl)
-        setStatusMessage('')
-        setPromptText('')
-      }
-    } catch (err) {
-      setError(String(err))
-      setStatusMessage('')
-    } finally {
-      setIsLoading(false)
-    }
+    await generate({
+      promptText,
+      apiUrl,
+      workflow,
+      openSettings,
+      onSuccess: () => setPromptText(''),
+    })
   }
 
   return (
     <div className="min-h-screen bg-white text-slate-900 flex flex-col">
       <div className="flex flex-col items-center justify-center flex-1 px-6 py-12">
-        {/* Header Section */}
         <div className="text-center mb-12 max-w-2xl">
           <h1 className="text-5xl font-bold mb-4">ComfyUI</h1>
           <p className="text-xl text-slate-600 mb-8">Generate images from text</p>
-          
-          {/* Workflow Info */}
+
           <div className="flex flex-col gap-3 items-center text-sm text-slate-600">
             <span className="px-3 py-1 bg-slate-100 rounded-full font-medium">
               {hasConfiguredWorkflow ? workflowName : 'No workflow configured'}
             </span>
             <div className="flex gap-2">
               <label className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full font-medium cursor-pointer hover:bg-blue-200 transition-colors">
-                📁 Load Workflow
+                Upload Workflow JSON
                 <input
                   type="file"
                   accept=".json"
@@ -264,21 +116,17 @@ export default function App() {
                   className="hidden"
                 />
               </label>
-              {hasConfiguredWorkflow && (
-                <button
-                  onClick={useSampleWorkflow}
-                  className="px-3 py-1 bg-slate-200 text-slate-700 rounded-full font-medium hover:bg-slate-300 transition-colors"
-                >
-                  Use Sample Workflow
-                </button>
-              )}
+              <button
+                onClick={handleUseSampleWorkflow}
+                className="px-3 py-1 bg-slate-200 text-slate-700 rounded-full font-medium hover:bg-slate-300 transition-colors"
+              >
+                Use Sample Workflow
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Content Area - Centers based on image presence */}
         <div className={`w-full max-w-2xl flex flex-col ${imageSrc ? 'items-start' : 'items-center justify-center'}`}>
-          {/* Image Preview Area - Only shown when image exists */}
           {imageSrc && (
             <div className="w-full mb-12 flex justify-center">
               {isLoading ? (
@@ -294,16 +142,15 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <img 
-                  src={imageSrc} 
-                  alt="Generated" 
+                <img
+                  src={imageSrc}
+                  alt="Generated"
                   className="w-full rounded-lg shadow-lg"
                 />
               )}
             </div>
           )}
 
-          {/* Loading Spinner - Shown when loading and no image yet */}
           {isLoading && !imageSrc && (
             <div className="w-full flex flex-col items-center justify-center py-12 mb-12">
               <div className="w-16 h-16 border-4 border-slate-300 border-t-slate-900 rounded-full animate-spin mb-4"></div>
@@ -311,7 +158,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Error Display - Shown when error and no image */}
           {error && !imageSrc && (
             <div className="w-full flex items-center justify-center bg-red-50 rounded-lg border border-red-200 p-8 mb-12">
               <div className="text-center">
@@ -321,7 +167,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Input Section */}
           <form onSubmit={handleGenerate} className="w-full">
             <div className="relative">
               <textarea
@@ -364,13 +209,11 @@ export default function App() {
           </form>
         </div>
 
-        {/* Footer */}
         <div className="mt-12 text-center text-sm text-slate-500">
-          <p>Connected to: <span className="font-mono text-slate-700">{apiUrl}</span></p>
+          <p>Connected to: <span className="font-mono text-slate-700">{apiUrl || 'Not configured'}</span></p>
         </div>
       </div>
 
-      {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg shadow-2xl max-w-md w-full p-6 border border-slate-200">
@@ -380,7 +223,7 @@ export default function App() {
                 Complete setup to continue: add your API URL and workflow JSON.
               </p>
             )}
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-slate-900 mb-2">
@@ -394,6 +237,21 @@ export default function App() {
                   className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
                 />
                 <p className="text-xs text-slate-500 mt-2">Enter the base URL without /prompt</p>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTestingConnection}
+                    className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                  >
+                    {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  {connectionStatus && (
+                    <p className={`text-xs mt-2 ${connectionStatus.type === 'success' ? 'text-green-700' : connectionStatus.type === 'error' ? 'text-red-700' : 'text-slate-500'}`}>
+                      {connectionStatus.message}
+                    </p>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -412,7 +270,8 @@ export default function App() {
                     />
                   </label>
                   <button
-                    onClick={useSampleWorkflow}
+                    type="button"
+                    onClick={handleUseSampleWorkflow}
                     className="flex-1 px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 transition-colors"
                   >
                     Use Sample
@@ -423,6 +282,7 @@ export default function App() {
 
             <div className="flex gap-3 mt-6">
               <button
+                type="button"
                 onClick={handleSaveSettings}
                 className="flex-1 px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 transition-colors"
               >
@@ -430,7 +290,8 @@ export default function App() {
               </button>
               {canCloseSettings && (
                 <button
-                  onClick={() => setShowSettings(false)}
+                  type="button"
+                  onClick={closeSettings}
                   className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 font-semibold rounded-lg hover:bg-slate-300 transition-colors"
                 >
                   Cancel

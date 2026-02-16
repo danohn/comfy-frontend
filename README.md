@@ -1,37 +1,72 @@
-# ComfyUI Frontend (Vite + React)
+# ComfyUI Frontend
 
-Minimal frontend to send prompts to a ComfyUI REST endpoint and preview the generated image.
+A React + Vite frontend for sending prompts to a ComfyUI server and previewing generated images.
 
-Quick start
+## Requirements
 
-1. Install dependencies
+- Node.js 18+
+- A running ComfyUI server with API routes available
+
+## Install
 
 ```bash
-cd comfy-frontend
 npm install
 ```
 
-2. Run dev server
+## Run
 
 ```bash
 npm run dev
 ```
 
-3. Open the app at the printed Vite URL (usually `http://localhost:5173`).
+Then open the local URL printed by Vite (usually `http://localhost:5173`).
 
-Usage
+## Build
 
- - On first load, if no API URL or workflow is saved in local storage, the app opens Settings onboarding.
- - Enter your ComfyUI REST endpoint base URL in Settings (example: `http://your-comfyui-host:8188`).
- - Upload your workflow JSON, or click **Use Sample** if you want to start with the bundled sample workflow.
-- Type a prompt and click **Generate**.
+```bash
+npm run build
+```
 
-Workflow-based runs
+## First-Time Setup
 
-- This frontend sends the entire ComfyUI workflow JSON (default file: `01_get_started_text_to_image.json`) to the API URL you provide. Before sending, it injects your prompt into nodes that look like prompt encoders (for example `CLIPTextEncode` nodes with an `inputs.text` field). The payload is wrapped as `{ "prompt": <workflow> }` to match ComfyUI `/prompt`.
-- The workflow includes a `PreviewImage` node (node 61) that outputs the generated image to the outputs dict (not just saves to disk).
-- The frontend POSTs to `/prompt`, receives a `prompt_id`, then polls `/history/{prompt_id}` every second until the job status shows `completed: true`.
-- Once an image is in the history outputs, the app constructs a `/view` URL to display the generated image from the server's output directory.
-- This frontend currently expects ComfyUI's `/prompt` + `/history/{prompt_id}` + `/view` flow. If your backend uses a different response format, update `src/App.jsx`.
+On first launch, the app opens Settings and requires:
 
-Want me to start the dev server here? I can run `npm install` and `npm run dev` for you.
+1. ComfyUI API base URL (example: `http://your-comfyui-host:8188`)
+2. A workflow JSON file
+
+In Settings you can:
+
+- Click `Test Connection` to verify the API URL
+- Upload your own workflow JSON
+- Use the bundled sample workflow
+
+The app will not allow image generation until both API URL and workflow are configured.
+
+## How Generation Works
+
+1. You enter a prompt.
+2. The app injects that prompt into compatible text nodes in the workflow.
+3. The app POSTs the workflow to `/prompt`.
+4. It polls `/history/{prompt_id}` until completion.
+5. It resolves the output image via `/view` and displays it.
+
+## Stored Local Data
+
+The app stores configuration in browser local storage:
+
+- `comfy_api_url`
+- `comfy_workflow`
+- `comfy_workflow_name`
+
+## Project Structure
+
+- `src/App.jsx`: main UI shell and settings/onboarding layout
+- `src/hooks/useApiConfig.js`: API URL state, persistence, and connection testing
+- `src/hooks/useWorkflowConfig.js`: workflow upload/sample selection and persistence
+- `src/hooks/useGeneration.js`: prompt submission, polling, and output resolution
+
+## Troubleshooting
+
+- If connection testing fails, verify the ComfyUI host/port and browser CORS/network access.
+- If generation fails with prompt-node errors, your workflow may not include compatible text input nodes.
+- If settings seem stale, clear local storage for this site and reload.
