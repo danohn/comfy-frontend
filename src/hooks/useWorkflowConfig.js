@@ -18,9 +18,19 @@ function loadStoredWorkflow() {
   return null
 }
 
+function loadStoredWorkflowName() {
+  const savedName = localStorage.getItem('comfy_workflow_name') || ''
+  if (savedName === 'Default (Lumina2 Text-to-Image)' || savedName === 'Sample (Lumina2 Text-to-Image)') {
+    const migratedName = 'Sample (Z-Image-Turbo)'
+    localStorage.setItem('comfy_workflow_name', migratedName)
+    return migratedName
+  }
+  return savedName
+}
+
 export default function useWorkflowConfig(sampleWorkflow) {
   const [workflow, setWorkflow] = useState(() => loadStoredWorkflow())
-  const [workflowName, setWorkflowName] = useState(() => localStorage.getItem('comfy_workflow_name') || '')
+  const [workflowName, setWorkflowName] = useState(() => loadStoredWorkflowName())
   const hasConfiguredWorkflow = workflow !== null
 
   function saveWorkflow(nextWorkflow, name) {
@@ -37,7 +47,7 @@ export default function useWorkflowConfig(sampleWorkflow) {
   }
 
   function useSampleWorkflow() {
-    saveWorkflow(sampleWorkflow, 'Sample (Lumina2 Text-to-Image)')
+    saveWorkflow(sampleWorkflow, 'Sample (Z-Image-Turbo)')
   }
 
   return {
