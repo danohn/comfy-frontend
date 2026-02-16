@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 import useApiConfig from './hooks/useApiConfig'
 import useWorkflowConfig from './hooks/useWorkflowConfig'
 import useGeneration from './hooks/useGeneration'
+
+const REMOTE_TEMPLATES_BASE_URL = 'https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates'
+const REMOTE_TEMPLATES_INDEX_URL = `${REMOTE_TEMPLATES_BASE_URL}/index.json`
 
 export default function App() {
   const navigate = useNavigate()
@@ -26,13 +29,25 @@ export default function App() {
   const [serverExtensions, setServerExtensions] = useState([])
   const [serverHistoryCount, setServerHistoryCount] = useState(null)
   const [serverTemplates, setServerTemplates] = useState([])
+  const [templateSource, setTemplateSource] = useState('none')
   const [isLoadingServerData, setIsLoadingServerData] = useState(false)
   const [serverDataError, setServerDataError] = useState(null)
-  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [templateSearch, setTemplateSearch] = useState('')
+  const [applyingTemplateId, setApplyingTemplateId] = useState(null)
+  const [forceApplyByTemplate, setForceApplyByTemplate] = useState({})
+  const [modelCheckByTemplate, setModelCheckByTemplate] = useState({})
+  const [activePrereqTemplateId, setActivePrereqTemplateId] = useState(null)
+  const [modelInventory, setModelInventory] = useState(null)
+  const [isLoadingModelInventory, setIsLoadingModelInventory] = useState(false)
   const [opsActionStatus, setOpsActionStatus] = useState(null)
   const [serverRecentJobs, setServerRecentJobs] = useState([])
   const [isLoadingRecentJobs, setIsLoadingRecentJobs] = useState(false)
   const [recentJobsError, setRecentJobsError] = useState(null)
+  const [selectedJobId, setSelectedJobId] = useState(null)
+  const [jobDetail, setJobDetail] = useState(null)
+  const [isLoadingJobDetail, setIsLoadingJobDetail] = useState(false)
+  const [jobDetailError, setJobDetailError] = useState(null)
+  const jobPromptCacheRef = useRef({})
 
   const {
     apiUrl,
@@ -267,12 +282,19 @@ export default function App() {
     if (!raw || typeof raw !== 'object') return []
 
     const templates = []
-    const pushTemplate = (id, label, workflowData) => {
+    const pushTemplate = (id, label, workflowData, extra = {}) => {
       if (workflowData && typeof workflowData === 'object') {
         templates.push({
           id,
           label,
+          title: extra.title || label,
+          description: extra.description || '',
+          mediaType: extra.mediaType || 'unknown',
+          tags: Array.isArray(extra.tags) ? extra.tags : [],
+          thumbnailUrl: extra.thumbnailUrl || null,
+          workflowUrl: null,
           workflow: workflowData,
+          source: 'server',
         })
       }
     }
@@ -284,19 +306,70 @@ export default function App() {
           if (!item || typeof item !== 'object') continue
           const workflowData = item.workflow || item.prompt || item.data?.workflow || item.data?.prompt
           const label = item.name || item.title || `${groupKey} template ${i + 1}`
-          pushTemplate(`${groupKey}:${label}:${i}`, `${groupKey}: ${label}`, workflowData)
+          pushTemplate(`${groupKey}:${label}:${i}`, `${groupKey}: ${label}`, workflowData, {
+            title: item.title || label,
+            description: item.description || '',
+            mediaType: item.mediaType || item.type || 'unknown',
+            tags: item.tags,
+          })
         }
       } else if (groupValue && typeof groupValue === 'object') {
         for (const [templateKey, templateValue] of Object.entries(groupValue)) {
           if (!templateValue || typeof templateValue !== 'object') continue
           const workflowData = templateValue.workflow || templateValue.prompt || templateValue.data?.workflow || templateValue.data?.prompt
           const label = templateValue.name || templateValue.title || templateKey
-          pushTemplate(`${groupKey}:${templateKey}`, `${groupKey}: ${label}`, workflowData)
+          pushTemplate(`${groupKey}:${templateKey}`, `${groupKey}: ${label}`, workflowData, {
+            title: templateValue.title || label,
+            description: templateValue.description || '',
+            mediaType: templateValue.mediaType || templateValue.type || 'unknown',
+            tags: templateValue.tags,
+          })
         }
       }
     }
 
     return templates
+  }
+
+  function extractIndexedTemplates(raw, templatesBaseUrl, source) {
+    if (!Array.isArray(raw)) return []
+
+    const templates = []
+    for (const section of raw) {
+      if (!section || typeof section !== 'object') continue
+      const sectionTitle = section.title || section.category || section.type || 'Templates'
+      const sectionTemplates = Array.isArray(section.templates) ? section.templates : []
+      for (const template of sectionTemplates) {
+        if (!template || typeof template !== 'object') continue
+        const name = template.name
+        if (!name || typeof name !== 'string') continue
+        const displayName = template.title || template.name
+        const mediaSubtype = template.mediaSubtype || 'webp'
+        templates.push({
+          id: `${source}:${sectionTitle}:${name}`,
+          label: `${sectionTitle}: ${displayName}`,
+          title: displayName,
+          description: template.description || '',
+          mediaType: template.mediaType || section.type || 'unknown',
+          tags: Array.isArray(template.tags) ? template.tags : [],
+          thumbnailUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}-1.${encodeURIComponent(mediaSubtype)}`,
+          source,
+          workflowUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}.json`,
+          workflow: null,
+        })
+      }
+    }
+
+    return templates
+  }
+
+  async function fetchTemplateIndex(indexUrl, templatesBaseUrl, source) {
+    const res = await fetch(indexUrl)
+    if (!res.ok) {
+      throw new Error(`Template index failed: ${res.status}`)
+    }
+    const indexRaw = await res.json()
+    return extractIndexedTemplates(indexRaw, templatesBaseUrl, source)
   }
 
   async function fetchServerData() {
@@ -306,12 +379,13 @@ export default function App() {
     setServerDataError(null)
     try {
       const baseUrl = normalizeBaseUrl(apiUrl)
-      const [featuresRes, statsRes, extensionsRes, historyRes, templatesRes] = await Promise.all([
+      const [featuresRes, statsRes, extensionsRes, historyRes, templatesRes, jobsRes] = await Promise.all([
         fetch(`${baseUrl}/features`),
         fetch(`${baseUrl}/system_stats`),
         fetch(`${baseUrl}/extensions`),
         fetch(`${baseUrl}/history`),
         fetch(`${baseUrl}/workflow_templates`),
+        fetch(`${baseUrl}/api/jobs?limit=1&offset=0`),
       ])
 
       if (featuresRes.ok) {
@@ -328,12 +402,43 @@ export default function App() {
         const history = await historyRes.json()
         setServerHistoryCount(history && typeof history === 'object' ? Object.keys(history).length : 0)
       }
+      if (jobsRes.ok) {
+        const jobsData = await jobsRes.json()
+        const total = jobsData?.pagination?.total
+        if (typeof total === 'number') {
+          setServerHistoryCount(total)
+        }
+      }
+      const localTemplatesIndexUrl = `${baseUrl}/templates/index.json`
+      try {
+        const indexedTemplates = await fetchTemplateIndex(localTemplatesIndexUrl, `${baseUrl}/templates`, 'local-index')
+        if (indexedTemplates.length > 0) {
+          setServerTemplates(indexedTemplates)
+          setTemplateSource('local-index')
+          return
+        }
+      } catch (_) {
+        // Continue to workflow_templates and remote fallback.
+      }
+
       if (templatesRes.ok) {
         const templatesRaw = await templatesRes.json()
         const templates = extractWorkflowTemplates(templatesRaw)
-        setServerTemplates(templates)
+        if (templates.length > 0) {
+          setServerTemplates(templates)
+          setTemplateSource('server')
+        } else {
+          const remoteTemplates = await fetchTemplateIndex(REMOTE_TEMPLATES_INDEX_URL, REMOTE_TEMPLATES_BASE_URL, 'remote')
+          setServerTemplates(remoteTemplates)
+          setTemplateSource(remoteTemplates.length > 0 ? 'remote' : 'none')
+        }
+      } else {
+        const remoteTemplates = await fetchTemplateIndex(REMOTE_TEMPLATES_INDEX_URL, REMOTE_TEMPLATES_BASE_URL, 'remote')
+        setServerTemplates(remoteTemplates)
+        setTemplateSource(remoteTemplates.length > 0 ? 'remote' : 'none')
       }
     } catch (err) {
+      setTemplateSource('none')
       setServerDataError(String(err))
     } finally {
       setIsLoadingServerData(false)
@@ -351,8 +456,191 @@ export default function App() {
     return ''
   }
 
-  function parseHistoryEntries(historyObject) {
+  function extractRequiredModelsFromWorkflow(workflowData) {
+    const required = []
+    const seenNodes = new Set()
+    const dedupe = new Set()
+
+    function walk(value) {
+      if (!value || typeof value !== 'object') return
+      if (seenNodes.has(value)) return
+      seenNodes.add(value)
+
+      if (Array.isArray(value.models)) {
+        for (const model of value.models) {
+          if (!model || typeof model !== 'object') continue
+          const name = typeof model.name === 'string' ? model.name : ''
+          const directory = typeof model.directory === 'string' ? model.directory : ''
+          const url = typeof model.url === 'string' ? model.url : ''
+          if (!name) continue
+          const key = `${directory}::${name}::${url}`
+          if (dedupe.has(key)) continue
+          dedupe.add(key)
+          required.push({ name, directory, url })
+        }
+      }
+
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item)
+        return
+      }
+      for (const nested of Object.values(value)) walk(nested)
+    }
+
+    walk(workflowData)
+    return required
+  }
+
+  async function fetchModelInventory(baseUrl) {
+    if (modelInventory) return modelInventory
+    if (isLoadingModelInventory) return null
+
+    setIsLoadingModelInventory(true)
+    try {
+      const foldersRes = await fetch(`${baseUrl}/models`)
+      if (!foldersRes.ok) {
+        throw new Error(`Model folders lookup failed: ${foldersRes.status}`)
+      }
+      const folders = await foldersRes.json()
+      const folderList = Array.isArray(folders) ? folders : []
+
+      const folderEntries = await Promise.all(
+        folderList.map(async (folder) => {
+          const folderKey = String(folder).toLowerCase()
+          try {
+            const res = await fetch(`${baseUrl}/models/${encodeURIComponent(folder)}`)
+            if (!res.ok) return [folderKey, new Set()]
+            const files = await res.json()
+            const names = Array.isArray(files) ? files.map((name) => String(name).toLowerCase()) : []
+            return [folderKey, new Set(names)]
+          } catch (_) {
+            return [folderKey, new Set()]
+          }
+        })
+      )
+
+      const inventory = Object.fromEntries(folderEntries)
+      setModelInventory(inventory)
+      return inventory
+    } finally {
+      setIsLoadingModelInventory(false)
+    }
+  }
+
+  async function loadTemplateWorkflowData(template) {
+    let workflowData = template.workflow
+    if (!workflowData && template.workflowUrl) {
+      const res = await fetch(template.workflowUrl)
+      if (!res.ok) {
+        throw new Error(`Template workflow download failed: ${res.status}`)
+      }
+      workflowData = await res.json()
+    }
+    if (!workflowData || typeof workflowData !== 'object') {
+      throw new Error('Template workflow payload is invalid')
+    }
+    return workflowData
+  }
+
+  async function checkTemplateModels(templateId, options = {}) {
+    if (!apiUrl) return
+    const template = serverTemplates.find((entry) => entry.id === templateId)
+    if (!template) return
+
+    setActivePrereqTemplateId(templateId)
+    setModelCheckByTemplate((current) => ({
+      ...current,
+      [templateId]: { loading: true, error: null, missing: [], available: 0, total: 0 },
+    }))
+
+    try {
+      const baseUrl = normalizeBaseUrl(apiUrl)
+      const inventory = await fetchModelInventory(baseUrl)
+      if (!inventory) {
+        throw new Error('Model inventory is still loading, please retry')
+      }
+
+      const workflowData = options.workflowData || await loadTemplateWorkflowData(template)
+
+      const requiredModels = extractRequiredModelsFromWorkflow(workflowData)
+      const missing = []
+      let available = 0
+      for (const model of requiredModels) {
+        const folderKey = String(model.directory || '').toLowerCase()
+        const nameKey = String(model.name || '').toLowerCase()
+        const folderEntries = inventory[folderKey]
+        const exists = folderEntries instanceof Set ? folderEntries.has(nameKey) : false
+        if (exists) {
+          available += 1
+        } else {
+          missing.push(model)
+        }
+      }
+
+      setModelCheckByTemplate((current) => ({
+        ...current,
+        [templateId]: {
+          loading: false,
+          error: null,
+          missing,
+          available,
+          total: requiredModels.length,
+          checkedAt: new Date().toISOString(),
+        },
+      }))
+      if (missing.length === 0) {
+        setForceApplyByTemplate((current) => ({ ...current, [templateId]: false }))
+      }
+      return {
+        loading: false,
+        error: null,
+        missing,
+        available,
+        total: requiredModels.length,
+        checkedAt: new Date().toISOString(),
+      }
+    } catch (err) {
+      const errorValue = String(err)
+      setModelCheckByTemplate((current) => ({
+        ...current,
+        [templateId]: { loading: false, error: errorValue, missing: [], available: 0, total: 0 },
+      }))
+      return { loading: false, error: errorValue, missing: [], available: 0, total: 0 }
+    }
+  }
+
+  function extractImageFromOutputObject(outputObject) {
+    if (!outputObject || typeof outputObject !== 'object') return null
+
     const baseUrl = normalizeBaseUrl(apiUrl)
+    const buildViewUrl = (fileObject) => {
+      if (!fileObject || typeof fileObject !== 'object') return null
+      const filename = fileObject.filename
+      if (!filename) return null
+      const subfolder = fileObject.subfolder || ''
+      const type = fileObject.type || 'output'
+      return `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`
+    }
+
+    // /api/jobs preview_output is often a direct file object, not images/video arrays.
+    const directUrl = buildViewUrl(outputObject)
+    if (directUrl) return directUrl
+
+    const imageLists = []
+    if (Array.isArray(outputObject.images)) imageLists.push(outputObject.images)
+    if (Array.isArray(outputObject.video)) imageLists.push(outputObject.video)
+    if (Array.isArray(outputObject.audio)) imageLists.push(outputObject.audio)
+
+    for (const list of imageLists) {
+      if (list.length === 0) continue
+      const url = buildViewUrl(list[0])
+      if (url) return url
+    }
+
+    return null
+  }
+
+  function parseHistoryEntries(historyObject) {
     const entries = Object.entries(historyObject || {}).map(([promptId, record]) => {
       const graph = record?.prompt?.[2]
       const prompt = extractPromptFromGraph(graph) || '(prompt unavailable)'
@@ -367,14 +655,8 @@ export default function App() {
       let imageSrc = null
       if (record?.outputs && typeof record.outputs === 'object') {
         for (const output of Object.values(record.outputs)) {
-          if (Array.isArray(output?.images) && output.images.length > 0) {
-            const image = output.images[0]
-            const filename = image.filename
-            const subfolder = image.subfolder || ''
-            const type = image.type || 'output'
-            imageSrc = `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`
-            break
-          }
+          imageSrc = extractImageFromOutputObject(output)
+          if (imageSrc) break
         }
       }
 
@@ -392,6 +674,63 @@ export default function App() {
       .slice(0, 20)
   }
 
+  function parseApiJobsEntries(jobsArray) {
+    return (Array.isArray(jobsArray) ? jobsArray : [])
+      .map((job) => {
+        const jobId = job?.id || job?.prompt_id || `${Math.random()}`
+        const cachedPrompt = jobPromptCacheRef.current[jobId]
+        const prompt = cachedPrompt || job?.prompt || null
+        const createdAt = (() => {
+          if (typeof job?.create_time !== 'number') return new Date().toISOString()
+          const createMs = job.create_time > 1e12 ? job.create_time : job.create_time * 1000
+          return new Date(createMs).toISOString()
+        })()
+        const status = job?.status || 'unknown'
+        const previewOutput = job?.preview_output
+        const imageSrc = extractImageFromOutputObject(previewOutput)
+
+        return {
+          id: jobId,
+          title: job?.name || `Job ${String(jobId).slice(0, 8)}`,
+          prompt,
+          status,
+          createdAt,
+          imageSrc,
+          source: 'api-jobs',
+        }
+      })
+      .slice(0, 20)
+  }
+
+  async function hydrateRecentJobPrompts(baseUrl, jobs) {
+    const candidates = jobs.filter((job) => !job.prompt && !jobPromptCacheRef.current[job.id]).slice(0, 6)
+    if (candidates.length === 0) return
+
+    await Promise.all(
+      candidates.map(async (job) => {
+        try {
+          const res = await fetch(`${baseUrl}/history/${encodeURIComponent(job.id)}`)
+          if (!res.ok) return
+          const detail = await res.json()
+          const record = detail?.[job.id] || Object.values(detail || {})[0]
+          const graph = record?.prompt?.[2]
+          const extractedPrompt = extractPromptFromGraph(graph)
+          if (!extractedPrompt) return
+          jobPromptCacheRef.current[job.id] = extractedPrompt
+        } catch (_) {
+          // Ignore per-job prompt hydration failures.
+        }
+      })
+    )
+
+    setServerRecentJobs((current) =>
+      current.map((job) => ({
+        ...job,
+        prompt: job.prompt || jobPromptCacheRef.current[job.id] || null,
+      }))
+    )
+  }
+
   async function fetchRecentHistory() {
     if (!apiUrl) return
 
@@ -399,6 +738,17 @@ export default function App() {
     setRecentJobsError(null)
     try {
       const baseUrl = normalizeBaseUrl(apiUrl)
+      const jobsRes = await fetch(`${baseUrl}/api/jobs?limit=20&offset=0&sort_by=created_at&sort_order=desc`)
+      if (jobsRes.ok) {
+        const jobsData = await jobsRes.json()
+        const parsedJobs = parseApiJobsEntries(jobsData?.jobs)
+        if (parsedJobs.length > 0) {
+          setServerRecentJobs(parsedJobs)
+          hydrateRecentJobPrompts(baseUrl, parsedJobs)
+          return
+        }
+      }
+
       const res = await fetch(`${baseUrl}/history`)
       if (!res.ok) {
         throw new Error(`History request failed: ${res.status}`)
@@ -412,24 +762,94 @@ export default function App() {
     }
   }
 
-  function applyTemplate(templateId) {
+  async function fetchJobDetail(jobId) {
+    if (!apiUrl || !jobId) return
+
+    setSelectedJobId(jobId)
+    setIsLoadingJobDetail(true)
+    setJobDetailError(null)
+    try {
+      const baseUrl = normalizeBaseUrl(apiUrl)
+      const jobsDetailRes = await fetch(`${baseUrl}/api/jobs/${encodeURIComponent(jobId)}`)
+      if (jobsDetailRes.ok) {
+        const detail = await jobsDetailRes.json()
+        setJobDetail({
+          source: 'api-jobs',
+          id: detail?.id || jobId,
+          status: detail?.status || 'unknown',
+          createTime: detail?.create_time,
+          updateTime: detail?.update_time,
+          workflowId: detail?.workflow_id || null,
+          outputsCount: detail?.outputs_count ?? null,
+          executionError: detail?.execution_error || null,
+          raw: detail,
+        })
+        return
+      }
+
+      const historyRes = await fetch(`${baseUrl}/history/${encodeURIComponent(jobId)}`)
+      if (!historyRes.ok) {
+        throw new Error(`Job detail request failed: ${jobsDetailRes.status}`)
+      }
+      const historyDetail = await historyRes.json()
+      const record = historyDetail?.[jobId] || Object.values(historyDetail || {})[0]
+      if (!record || typeof record !== 'object') {
+        throw new Error('No detail found for selected job')
+      }
+
+      setJobDetail({
+        source: 'history',
+        id: jobId,
+        status: record?.status?.status_str || (record?.status?.completed ? 'success' : 'unknown'),
+        createTime: null,
+        updateTime: null,
+        workflowId: null,
+        outputsCount: record?.outputs ? Object.keys(record.outputs).length : 0,
+        executionError: null,
+        raw: record,
+      })
+    } catch (err) {
+      setJobDetail(null)
+      setJobDetailError(String(err))
+    } finally {
+      setIsLoadingJobDetail(false)
+    }
+  }
+
+  async function applyTemplate(templateId, options = {}) {
     const template = serverTemplates.find((entry) => entry.id === templateId)
     if (!template) {
       setError('Selected template not found')
       return
     }
 
-    const blob = new Blob([JSON.stringify(template.workflow)], { type: 'application/json' })
-    const file = new File([blob], `${template.label}.json`, { type: 'application/json' })
-    uploadWorkflowFile(file)
-      .then(() => {
-        setSelectedTemplateId(templateId)
-        setError(null)
-        setValidationResult(null)
-      })
-      .catch((err) => {
-        setError(`Failed to apply template: ${err.message}`)
-      })
+    try {
+      setApplyingTemplateId(templateId)
+      const workflowData = await loadTemplateWorkflowData(template)
+      const check = await checkTemplateModels(templateId, { workflowData })
+      if (check?.error) {
+        throw new Error(check.error)
+      }
+
+      const hasMissingPrereqs = Array.isArray(check?.missing) && check.missing.length > 0
+      if (hasMissingPrereqs && !options.force) {
+        setForceApplyByTemplate((current) => ({ ...current, [templateId]: true }))
+        setError(`Missing prerequisites: ${check.missing.length} models not installed. Review and use "Force Apply Anyway" if needed.`)
+        return
+      }
+
+      const safeName = String(template.label || template.id).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80) || 'template'
+      const blob = new Blob([JSON.stringify(workflowData)], { type: 'application/json' })
+      const file = new File([blob], `${safeName}.json`, { type: 'application/json' })
+      await uploadWorkflowFile(file)
+      setForceApplyByTemplate((current) => ({ ...current, [templateId]: false }))
+      setError(null)
+      setValidationResult(null)
+    } catch (err) {
+      setError(`Failed to apply template: ${err.message}`)
+    } finally {
+      setApplyingTemplateId(null)
+    }
   }
 
   async function runOpsAction(actionName, body) {
@@ -704,10 +1124,26 @@ export default function App() {
                   <div key={job.id} className="border border-slate-200 rounded-lg p-3 bg-white">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-slate-900 break-words">{job.prompt}</p>
+                        <p className="text-sm text-slate-900 break-words">{job.title || `Job ${String(job.id).slice(0, 8)}`}</p>
+                        <p className="text-xs text-slate-500 mt-0.5 break-words">{job.prompt || 'Prompt unavailable'}</p>
                         <p className="text-xs text-slate-500 mt-1">{new Date(job.createdAt).toLocaleString()}</p>
                       </div>
                       <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedJobId === job.id) {
+                              setSelectedJobId(null)
+                              setJobDetail(null)
+                              setJobDetailError(null)
+                              return
+                            }
+                            fetchJobDetail(job.id)
+                          }}
+                          className={`px-2 py-1 text-xs rounded-md border ${selectedJobId === job.id ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'}`}
+                        >
+                          {selectedJobId === job.id ? 'Hide' : 'Details'}
+                        </button>
                         <span
                           className={`px-2 py-1 text-xs rounded-full font-medium ${
                             job.status === 'success'
@@ -739,6 +1175,59 @@ export default function App() {
                 ))}
               </div>
             )}
+
+            {(selectedJobId || isLoadingJobDetail || jobDetailError || jobDetail) && (
+              <div className="mt-4 border border-slate-200 rounded-lg p-4 bg-slate-50">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-semibold text-slate-900">Job Detail</h4>
+                  <div className="flex items-center gap-2">
+                    {selectedJobId && (
+                      <span className="text-xs text-slate-500 font-mono">{selectedJobId}</span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedJobId(null)
+                        setJobDetail(null)
+                        setJobDetailError(null)
+                      }}
+                      className="text-xs text-slate-600 hover:text-slate-900"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                {isLoadingJobDetail ? (
+                  <p className="text-sm text-slate-500">Loading job details...</p>
+                ) : jobDetailError ? (
+                  <p className="text-sm text-red-700">{jobDetailError}</p>
+                ) : jobDetail ? (
+                  <div className="space-y-2 text-sm text-slate-700">
+                    <p>Status: <span className="font-medium">{jobDetail.status}</span></p>
+                    {jobDetail.workflowId && <p>Workflow ID: <span className="font-mono">{jobDetail.workflowId}</span></p>}
+                    {typeof jobDetail.outputsCount === 'number' && <p>Output count: {jobDetail.outputsCount}</p>}
+                    {typeof jobDetail.createTime === 'number' && (
+                      <p>Created: {new Date(jobDetail.createTime * 1000).toLocaleString()}</p>
+                    )}
+                    {typeof jobDetail.updateTime === 'number' && (
+                      <p>Updated: {new Date(jobDetail.updateTime * 1000).toLocaleString()}</p>
+                    )}
+                    {jobDetail.executionError && (
+                      <div className="p-2 border border-red-200 bg-red-50 rounded text-red-800">
+                        <p className="font-semibold mb-1">Execution Error</p>
+                        <p className="text-xs">{jobDetail.executionError.exception_message || 'Unknown execution error'}</p>
+                      </div>
+                    )}
+                    <details>
+                      <summary className="cursor-pointer text-xs text-slate-600">Raw payload</summary>
+                      <pre className="mt-2 p-2 bg-white border border-slate-200 rounded text-xs overflow-auto max-h-56">
+                        {JSON.stringify(jobDetail.raw, null, 2)}
+                      </pre>
+                    </details>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
 
@@ -768,6 +1257,23 @@ export default function App() {
   }
 
   function renderSettingsPage() {
+    const normalizedQuery = templateSearch.trim().toLowerCase()
+    const filteredTemplates = normalizedQuery
+      ? serverTemplates.filter((template) => {
+        const haystack = [
+          template.title,
+          template.label,
+          template.description,
+          ...(Array.isArray(template.tags) ? template.tags : []),
+          template.mediaType,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(normalizedQuery)
+      })
+      : serverTemplates
+
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900">
         <div className="max-w-4xl mx-auto px-6 py-8">
@@ -836,31 +1342,150 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
-                <div className="flex gap-2">
-                  <select
-                    value={selectedTemplateId}
-                    onChange={(e) => setSelectedTemplateId(e.target.value)}
-                    className="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                  >
-                    <option value="">Select template...</option>
-                    {serverTemplates.map((template) => (
-                      <option key={template.id} value={template.id}>{template.label}</option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={!selectedTemplateId}
-                    onClick={() => applyTemplate(selectedTemplateId)}
-                    className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50"
-                  >
-                    Apply
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  value={templateSearch}
+                  onChange={(e) => setTemplateSearch(e.target.value)}
+                  placeholder="Search templates by name, tag, or description"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                />
                 <p className="text-xs text-slate-500 mt-1">
                   {serverTemplates.length > 0
-                    ? `${serverTemplates.length} templates available from /workflow_templates`
-                    : 'No server templates available'}
+                    ? templateSource === 'local-index'
+                      ? `${serverTemplates.length} templates available from /templates/index.json`
+                      : templateSource === 'remote'
+                      ? `${serverTemplates.length} templates available from remote index`
+                      : `${serverTemplates.length} templates available from server`
+                    : 'No templates available from server or remote index'}
                 </p>
+                {filteredTemplates.length > 0 ? (
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[34rem] overflow-y-auto pr-1">
+                    {filteredTemplates.map((template) => (
+                      <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                        {template.thumbnailUrl ? (
+                          <img
+                            src={template.thumbnailUrl}
+                            alt={template.title || template.label}
+                            className="w-full h-32 object-cover bg-slate-100"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
+                        )}
+                        <div className="p-3">
+                          <p className="text-sm font-semibold text-slate-900 line-clamp-2">{template.title || template.label}</p>
+                          <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                            {template.description || 'No description provided'}
+                          </p>
+                          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-600">
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
+                              {template.mediaType || 'unknown'}
+                            </span>
+                            {Array.isArray(template.tags) && template.tags.length > 0 && (
+                              <span className="truncate">{template.tags.slice(0, 2).join(', ')}</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => applyTemplate(template.id)}
+                            disabled={applyingTemplateId === template.id}
+                            className="mt-3 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
+                          </button>
+                          {forceApplyByTemplate[template.id] && (
+                            <button
+                              type="button"
+                              onClick={() => applyTemplate(template.id, { force: true })}
+                              disabled={applyingTemplateId === template.id}
+                              className="mt-2 w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200 disabled:opacity-60"
+                            >
+                              {applyingTemplateId === template.id ? 'Applying...' : 'Force Apply Anyway'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (activePrereqTemplateId === template.id) {
+                                setActivePrereqTemplateId(null)
+                              } else {
+                                checkTemplateModels(template.id)
+                              }
+                            }}
+                            disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
+                            className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
+                          >
+                            {modelCheckByTemplate[template.id]?.loading
+                              ? 'Checking prerequisites...'
+                              : isLoadingModelInventory
+                                ? 'Loading model inventory...'
+                                : activePrereqTemplateId === template.id
+                                  ? 'Hide Prerequisites'
+                                  : 'Check Prerequisites'}
+                          </button>
+                          {activePrereqTemplateId === template.id && modelCheckByTemplate[template.id]?.error && (
+                            <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
+                          )}
+                          {activePrereqTemplateId === template.id && modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
+                            <div className="mt-2">
+                              <p className={`text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                                {modelCheckByTemplate[template.id].missing.length === 0
+                                  ? `All ${modelCheckByTemplate[template.id].total} required models are available`
+                                  : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required models`}
+                              </p>
+                              {modelCheckByTemplate[template.id].missing.length > 0 && (
+                                <div className="mt-2 space-y-2">
+                                  {modelCheckByTemplate[template.id].missing.map((model) => (
+                                    <div key={`${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-2">
+                                      <p className="text-xs text-slate-700 break-all">
+                                        {(model.directory || 'unknown')} / {model.name}
+                                      </p>
+                                      <div className="mt-1 flex gap-2">
+                                        {model.url ? (
+                                          <>
+                                            <a
+                                              href={model.url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
+                                            >
+                                              Download
+                                            </a>
+                                            <button
+                                              type="button"
+                                              onClick={async () => {
+                                                if (!model.url) return
+                                                try {
+                                                  await navigator.clipboard.writeText(model.url)
+                                                  setError('Model URL copied to clipboard')
+                                                } catch (_) {
+                                                  setError('Failed to copy model URL')
+                                                }
+                                              }}
+                                              className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
+                                            >
+                                              Copy URL
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <span className="text-xs text-slate-500">No download URL provided</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-slate-500">
+                    {serverTemplates.length > 0 ? 'No templates match your search.' : 'No templates loaded yet.'}
+                  </p>
+                )}
               </div>
             </section>
 
