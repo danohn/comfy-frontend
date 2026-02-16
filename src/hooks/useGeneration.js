@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 const HISTORY_STORAGE_KEY = 'comfy_job_history'
 const MAX_HISTORY_ITEMS = 20
@@ -22,6 +22,14 @@ function loadStoredHistory() {
 
 function persistHistory(entries) {
   localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(entries))
+}
+
+function buildWebSocketUrl(baseUrl, clientId) {
+  const url = new URL(baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/ws'
+  url.searchParams.set('clientId', clientId)
+  return url.toString()
 }
 
 function injectPromptIntoWorkflow(runGraph, prompt) {
@@ -53,6 +61,14 @@ export default function useGeneration() {
   const [error, setError] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [jobHistory, setJobHistory] = useState(() => loadStoredHistory())
+  const [currentPromptId, setCurrentPromptId] = useState(null)
+  const cancelRequestedRef = useRef(false)
+  const [queueState, setQueueState] = useState({
+    pending: null,
+    running: null,
+    updatedAt: null,
+    error: null,
+  })
 
   function updateHistory(mutator) {
     setJobHistory((current) => {
@@ -81,7 +97,50 @@ export default function useGeneration() {
     setStatusMessage('')
   }
 
-  async function generate({ promptText, apiUrl, workflow, openSettings, onSuccess }) {
+  const refreshQueue = useCallback(async (apiUrl) => {
+    if (!apiUrl) return
+
+    const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
+    try {
+      const res = await fetch(`${baseUrl}/queue`)
+      if (!res.ok) {
+        setQueueState((current) => ({ ...current, error: `Queue check failed (${res.status})` }))
+        return
+      }
+      const data = await res.json()
+      const running = Array.isArray(data.queue_running) ? data.queue_running.length : 0
+      const pending = Array.isArray(data.queue_pending) ? data.queue_pending.length : 0
+      setQueueState({
+        running,
+        pending,
+        updatedAt: new Date().toISOString(),
+        error: null,
+      })
+    } catch (_) {
+      setQueueState((current) => ({ ...current, error: 'Queue unavailable' }))
+    }
+  }, [])
+
+  const cancelCurrentRun = useCallback(async (apiUrl) => {
+    if (!apiUrl || !isLoading) return false
+
+    const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
+    try {
+      const res = await fetch(`${baseUrl}/interrupt`, { method: 'POST' })
+      if (!res.ok) {
+        setError(`Cancel request failed: ${res.status}`)
+        return false
+      }
+      cancelRequestedRef.current = true
+      setStatusMessage('Cancelling...')
+      return true
+    } catch (_) {
+      setError('Cancel request failed (network/CORS error)')
+      return false
+    }
+  }, [isLoading])
+
+  const generate = useCallback(async ({ promptText, apiUrl, workflow, openSettings, onSuccess }) => {
     if (!promptText.trim()) return
     if (!apiUrl) {
       setError('Configure your ComfyUI API URL in Settings to generate images')
@@ -97,7 +156,8 @@ export default function useGeneration() {
     setIsLoading(true)
     setError(null)
     setImageSrc(null)
-    setStatusMessage('Queuing job...')
+    setStatusMessage('Queued')
+    cancelRequestedRef.current = false
 
     const historyItemId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
     addHistoryItem({
@@ -109,6 +169,8 @@ export default function useGeneration() {
       error: null,
     })
 
+    let ws = null
+
     try {
       const runGraph = JSON.parse(JSON.stringify(workflow))
       const updatedPromptNodes = injectPromptIntoWorkflow(runGraph, promptText)
@@ -117,11 +179,73 @@ export default function useGeneration() {
       }
 
       const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
+      const clientId = `web-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+
+      try {
+        ws = new WebSocket(buildWebSocketUrl(baseUrl, clientId))
+      } catch (_) {
+        ws = null
+      }
+
+      if (ws) {
+        let activePromptId = null
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data)
+            if (message.type === 'status') {
+              const pendingRaw = message.data?.status?.exec_info?.queue_remaining
+              const pending = typeof pendingRaw === 'number' ? pendingRaw : undefined
+
+              setQueueState((current) => ({
+                running: current.running,
+                pending: typeof pending === 'number' ? pending : current.pending,
+                updatedAt: new Date().toISOString(),
+                error: null,
+              }))
+            } else if (message.type === 'execution_start') {
+              if (message.data?.prompt_id) {
+                activePromptId = message.data.prompt_id
+              }
+            } else if (message.type === 'executing') {
+              if (activePromptId && message.data?.prompt_id && message.data.prompt_id !== activePromptId) {
+                return
+              }
+            } else if (message.type === 'progress') {
+              if (activePromptId && message.data?.prompt_id && message.data.prompt_id !== activePromptId) {
+                return
+              }
+              const value = message.data?.value
+              const max = message.data?.max
+              if (typeof value === 'number' && typeof max === 'number' && max > 0) {
+                const pct = Math.round((value / max) * 100)
+                setStatusMessage(`Generating... ${pct}%`)
+              }
+            } else if (message.type === 'progress_state') {
+              if (activePromptId && message.data?.prompt_id && message.data.prompt_id !== activePromptId) {
+                return
+              }
+            } else if (message.type === 'execution_success') {
+              if (activePromptId && message.data?.prompt_id && message.data.prompt_id !== activePromptId) {
+                return
+              }
+            } else if (message.type === 'execution_error') {
+              if (activePromptId && message.data?.prompt_id && message.data.prompt_id !== activePromptId) {
+                return
+              }
+              const err = message.data?.exception_message || 'Execution error'
+              setStatusMessage(`Error: ${err}`)
+            }
+          } catch (_) {
+            // Ignore malformed websocket messages.
+          }
+        }
+      }
 
       const queueRes = await fetch(`${baseUrl}/prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: runGraph }),
+        body: JSON.stringify({ prompt: runGraph, client_id: clientId }),
       })
 
       if (!queueRes.ok) {
@@ -134,9 +258,9 @@ export default function useGeneration() {
       if (!promptId) {
         throw new Error('No prompt_id in response')
       }
+      setCurrentPromptId(promptId)
       patchHistoryItem(historyItemId, { promptId })
-
-      setStatusMessage('Generating...')
+      await refreshQueue(apiUrl)
 
       let result = null
       let attempts = 0
@@ -149,7 +273,6 @@ export default function useGeneration() {
         try {
           const historyRes = await fetch(`${baseUrl}/history/${promptId}`)
           if (!historyRes.ok) {
-            setStatusMessage(`Generating... ${attempts}s (retrying after ${historyRes.status})`)
             continue
           }
 
@@ -161,12 +284,12 @@ export default function useGeneration() {
               break
             }
           }
+          if (attempts % 3 === 0) {
+            await refreshQueue(apiUrl)
+          }
         } catch (_) {
-          setStatusMessage(`Generating... ${attempts}s (network retry)`)
           continue
         }
-
-        setStatusMessage(`Generating... ${attempts}s`)
       }
 
       if (!result) {
@@ -198,7 +321,7 @@ export default function useGeneration() {
         })
       } else {
         setImageSrc(imageUrl)
-        setStatusMessage('')
+        setStatusMessage('Done')
         patchHistoryItem(historyItemId, {
           status: 'success',
           imageSrc: imageUrl,
@@ -212,24 +335,36 @@ export default function useGeneration() {
       setError(message)
       setStatusMessage('')
       patchHistoryItem(historyItemId, {
-        status: 'failed',
+        status: cancelRequestedRef.current || message.toLowerCase().includes('interrupt') || message.toLowerCase().includes('cancel')
+          ? 'cancelled'
+          : 'failed',
         error: message,
         finishedAt: new Date().toISOString(),
       })
     } finally {
+      cancelRequestedRef.current = false
+      setCurrentPromptId(null)
+      await refreshQueue(apiUrl)
       setIsLoading(false)
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.close()
+      }
     }
-  }
+  }, [isLoading, refreshQueue])
 
   return {
     isLoading,
     imageSrc,
     error,
     statusMessage,
+    currentPromptId,
+    queueState,
     jobHistory,
     setError,
     clearHistory,
     showHistoryImage,
+    refreshQueue,
+    cancelCurrentRun,
     generate,
   }
 }

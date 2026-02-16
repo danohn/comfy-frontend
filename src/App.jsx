@@ -33,10 +33,14 @@ export default function App() {
     imageSrc,
     error,
     statusMessage,
+    currentPromptId,
+    queueState,
     jobHistory,
     setError,
     clearHistory,
     showHistoryImage,
+    refreshQueue,
+    cancelCurrentRun,
     generate,
   } = useGeneration()
 
@@ -57,6 +61,17 @@ export default function App() {
       setShowSettings(false)
     }
   }, [canCloseSettings, setShowSettings])
+
+  useEffect(() => {
+    if (!hasConfiguredApiUrl) return
+
+    refreshQueue(apiUrl)
+    const intervalId = setInterval(() => {
+      refreshQueue(apiUrl)
+    }, 8000)
+
+    return () => clearInterval(intervalId)
+  }, [apiUrl, hasConfiguredApiUrl, refreshQueue])
 
   function handleStartOnboarding() {
     localStorage.setItem('comfy_onboarding_seen', '1')
@@ -113,6 +128,10 @@ export default function App() {
       openSettings,
       onSuccess: () => setPromptText(''),
     })
+  }
+
+  async function handleCancelRun() {
+    await cancelCurrentRun(apiUrl)
   }
 
   return (
@@ -193,6 +212,11 @@ export default function App() {
                 <span className={`px-2 py-1 rounded-full font-medium ${hasConfiguredWorkflow ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                   Workflow: {hasConfiguredWorkflow ? workflowName : 'Missing'}
                 </span>
+                {typeof queueState.running === 'number' && typeof queueState.pending === 'number' && (
+                  <span className="px-2 py-1 rounded-full font-medium bg-slate-200 text-slate-700">
+                    Queue: {queueState.running} running, {queueState.pending} pending
+                  </span>
+                )}
               </div>
               {!canCloseSettings && (
                 <button
@@ -221,14 +245,24 @@ export default function App() {
                 disabled={isLoading}
               />
               <div className="absolute right-4 bottom-4 flex gap-2">
+                {isLoading && (
+                  <button
+                    type="button"
+                    onClick={handleCancelRun}
+                    className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 rounded-md hover:bg-red-200 transition-colors"
+                    title={currentPromptId ? `Cancel ${currentPromptId}` : 'Cancel current run'}
+                  >
+                    Cancel
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={isLoading || !promptText.trim() || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
-                  className="p-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                  className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
+                  title={isLoading ? 'Generating...' : 'Generate image'}
+                  aria-label={isLoading ? 'Generating image' : 'Generate image'}
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2m0 0v-8m0 8H3m18 0h-3" />
-                  </svg>
+                  <span>{isLoading ? 'Generating' : 'Generate'}</span>
                 </button>
               </div>
             </div>
@@ -281,6 +315,8 @@ export default function App() {
                             ? 'bg-green-100 text-green-700'
                             : job.status === 'failed'
                               ? 'bg-red-100 text-red-700'
+                              : job.status === 'cancelled'
+                                ? 'bg-amber-100 text-amber-700'
                               : 'bg-blue-100 text-blue-700'
                         }`}
                       >
