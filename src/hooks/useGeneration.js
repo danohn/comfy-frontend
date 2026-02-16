@@ -55,6 +55,59 @@ function injectPromptIntoWorkflow(runGraph, prompt) {
   return updatedCount
 }
 
+function parseSelectedModel(selectedModel) {
+  if (!selectedModel) return { folder: null, name: null }
+  if (!selectedModel.includes('::')) return { folder: null, name: selectedModel }
+
+  const [folder, ...rest] = selectedModel.split('::')
+  return { folder, name: rest.join('::') || null }
+}
+
+function injectModelIntoWorkflow(runGraph, selectedModel) {
+  const parsed = parseSelectedModel(selectedModel)
+  if (!parsed.name) return 0
+
+  let updatedCount = 0
+  for (const nodeId of Object.keys(runGraph)) {
+    const node = runGraph[nodeId]
+    if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
+      continue
+    }
+
+    const classType = String(node.class_type || '').toLowerCase()
+    if ((parsed.folder === 'checkpoints' || parsed.folder === null) && classType.includes('checkpointloader') && typeof node.inputs.ckpt_name === 'string') {
+      node.inputs.ckpt_name = parsed.name
+      updatedCount++
+    }
+    if ((parsed.folder === 'diffusion_models' || parsed.folder === null) && classType === 'unetloader' && typeof node.inputs.unet_name === 'string') {
+      node.inputs.unet_name = parsed.name
+      updatedCount++
+    }
+  }
+
+  return updatedCount
+}
+
+function injectImageIntoWorkflow(runGraph, imageName) {
+  if (!imageName) return 0
+
+  let updatedCount = 0
+  for (const nodeId of Object.keys(runGraph)) {
+    const node = runGraph[nodeId]
+    if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
+      continue
+    }
+
+    const classType = String(node.class_type || '').toLowerCase()
+    if (classType === 'loadimage' && typeof node.inputs.image === 'string') {
+      node.inputs.image = imageName
+      updatedCount++
+    }
+  }
+
+  return updatedCount
+}
+
 export default function useGeneration() {
   const [isLoading, setIsLoading] = useState(false)
   const [imageSrc, setImageSrc] = useState(null)
@@ -140,7 +193,15 @@ export default function useGeneration() {
     }
   }, [isLoading])
 
-  const generate = useCallback(async ({ promptText, apiUrl, workflow, openSettings, onSuccess }) => {
+  const generate = useCallback(async ({
+    promptText,
+    apiUrl,
+    workflow,
+    openSettings,
+    selectedModel,
+    inputImageFile,
+    onSuccess,
+  }) => {
     if (!promptText.trim()) return
     if (!apiUrl) {
       setError('Configure your ComfyUI API URL in Settings to generate images')
@@ -179,6 +240,32 @@ export default function useGeneration() {
       }
 
       const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
+      if (selectedModel) {
+        injectModelIntoWorkflow(runGraph, selectedModel)
+      }
+
+      if (inputImageFile) {
+        const body = new FormData()
+        body.append('image', inputImageFile)
+        const uploadRes = await fetch(`${baseUrl}/upload/image`, {
+          method: 'POST',
+          body,
+        })
+        if (!uploadRes.ok) {
+          throw new Error(`Image upload failed: ${uploadRes.status}`)
+        }
+        const uploadData = await uploadRes.json()
+        const uploadedName = uploadData.name || uploadData.filename
+        if (!uploadedName) {
+          throw new Error('Image upload failed: missing filename in response')
+        }
+
+        const updatedImageNodes = injectImageIntoWorkflow(runGraph, uploadedName)
+        if (updatedImageNodes === 0) {
+          throw new Error('Uploaded an image, but workflow has no compatible LoadImage nodes')
+        }
+      }
+
       const clientId = `web-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
 
       try {

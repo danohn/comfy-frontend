@@ -7,6 +7,14 @@ import useGeneration from './hooks/useGeneration'
 export default function App() {
   const [promptText, setPromptText] = useState('')
   const [showWelcome, setShowWelcome] = useState(false)
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('comfy_selected_model') || '')
+  const [availableModels, setAvailableModels] = useState([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+  const [modelsError, setModelsError] = useState(null)
+  const [validationResult, setValidationResult] = useState(null)
+  const [isValidatingWorkflow, setIsValidatingWorkflow] = useState(false)
+  const [inputImageFile, setInputImageFile] = useState(null)
+  const [inputImageName, setInputImageName] = useState('')
   const {
     apiUrl,
     settingsUrl,
@@ -73,6 +81,11 @@ export default function App() {
     return () => clearInterval(intervalId)
   }, [apiUrl, hasConfiguredApiUrl, refreshQueue])
 
+  useEffect(() => {
+    if (!showSettings || !hasConfiguredApiUrl) return
+    fetchAvailableModels()
+  }, [showSettings, hasConfiguredApiUrl, apiUrl])
+
   function handleStartOnboarding() {
     localStorage.setItem('comfy_onboarding_seen', '1')
     setShowWelcome(false)
@@ -96,6 +109,133 @@ export default function App() {
   function handleUseSampleWorkflow() {
     useSampleWorkflow()
     setError(null)
+    setValidationResult(null)
+  }
+
+  function normalizeBaseUrl(url) {
+    return url.trim().replace(/\/prompt\/?$/, '')
+  }
+
+  function formatModelValue(folder, modelName) {
+    return `${folder}::${modelName}`
+  }
+
+  function parseModelValue(value) {
+    if (!value) return { folder: null, name: '' }
+    const [folder, ...rest] = value.split('::')
+    return { folder: rest.length > 0 ? folder : null, name: rest.length > 0 ? rest.join('::') : value }
+  }
+
+  async function fetchAvailableModels() {
+    if (!apiUrl) return
+
+    setIsLoadingModels(true)
+    setModelsError(null)
+    try {
+      const baseUrl = normalizeBaseUrl(apiUrl)
+      const folders = ['checkpoints', 'diffusion_models']
+      const results = await Promise.all(
+        folders.map(async (folder) => {
+          const res = await fetch(`${baseUrl}/models/${folder}`)
+          if (!res.ok) return []
+          const data = await res.json()
+          if (!Array.isArray(data)) return []
+          return data.map((name) => ({
+            folder,
+            name,
+            value: formatModelValue(folder, name),
+          }))
+        })
+      )
+
+      const models = results.flat()
+      setAvailableModels(models)
+
+      if (selectedModel && !models.some((model) => model.value === selectedModel)) {
+        setSelectedModel('')
+        localStorage.removeItem('comfy_selected_model')
+      }
+    } catch (err) {
+      setModelsError(String(err))
+    } finally {
+      setIsLoadingModels(false)
+    }
+  }
+
+  function handleModelChange(value) {
+    setSelectedModel(value)
+    if (value) {
+      localStorage.setItem('comfy_selected_model', value)
+    } else {
+      localStorage.removeItem('comfy_selected_model')
+    }
+  }
+
+  async function handleValidateWorkflow() {
+    if (!apiUrl) {
+      setValidationResult({ ok: false, message: 'Configure API URL first' })
+      return
+    }
+    if (!workflow) {
+      setValidationResult({ ok: false, message: 'Upload a workflow first' })
+      return
+    }
+
+    setIsValidatingWorkflow(true)
+    try {
+      const baseUrl = normalizeBaseUrl(apiUrl)
+      const res = await fetch(`${baseUrl}/object_info`)
+      if (!res.ok) {
+        throw new Error(`Validation request failed: ${res.status}`)
+      }
+
+      const objectInfo = await res.json()
+      const classesInWorkflow = Array.from(
+        new Set(
+          Object.values(workflow)
+            .map((node) => node?.class_type)
+            .filter((classType) => typeof classType === 'string')
+        )
+      )
+      const missingClasses = classesInWorkflow.filter((classType) => !(classType in objectInfo))
+
+      if (missingClasses.length > 0) {
+        setValidationResult({
+          ok: false,
+          message: `Missing node classes: ${missingClasses.join(', ')}`,
+          missingClasses,
+          checkedAt: new Date().toISOString(),
+        })
+      } else {
+        setValidationResult({
+          ok: true,
+          message: 'Workflow is compatible with this server',
+          missingClasses: [],
+          checkedAt: new Date().toISOString(),
+        })
+      }
+    } catch (err) {
+      setValidationResult({
+        ok: false,
+        message: String(err),
+        missingClasses: [],
+        checkedAt: new Date().toISOString(),
+      })
+    } finally {
+      setIsValidatingWorkflow(false)
+    }
+  }
+
+  function handleInputImageChange(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setInputImageFile(file)
+    setInputImageName(file.name)
+  }
+
+  function clearInputImage() {
+    setInputImageFile(null)
+    setInputImageName('')
   }
 
   function handleSaveSettings() {
@@ -126,6 +266,8 @@ export default function App() {
       apiUrl,
       workflow,
       openSettings,
+      selectedModel,
+      inputImageFile,
       onSuccess: () => setPromptText(''),
     })
   }
@@ -212,6 +354,11 @@ export default function App() {
                 <span className={`px-2 py-1 rounded-full font-medium ${hasConfiguredWorkflow ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                   Workflow: {hasConfiguredWorkflow ? workflowName : 'Missing'}
                 </span>
+                {selectedModel && (
+                  <span className="px-2 py-1 rounded-full font-medium bg-blue-100 text-blue-700">
+                    Model: {parseModelValue(selectedModel).name}
+                  </span>
+                )}
                 {typeof queueState.running === 'number' && typeof queueState.pending === 'number' && (
                   <span className="px-2 py-1 rounded-full font-medium bg-slate-200 text-slate-700">
                     Queue: {queueState.running} running, {queueState.pending} pending
@@ -230,6 +377,26 @@ export default function App() {
             </div>
 
             <div className="relative">
+              <div className="absolute left-4 top-4 z-10">
+                <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
+                  Add input image
+                  <input type="file" accept="image/*" onChange={handleInputImageChange} className="hidden" />
+                </label>
+              </div>
+              {inputImageName && (
+                <div className="absolute left-4 top-12 z-10 flex items-center gap-2 text-xs">
+                  <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 max-w-60 truncate" title={inputImageName}>
+                    {inputImageName}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearInputImage}
+                    className="px-2 py-1 rounded bg-slate-200 text-slate-700 hover:bg-slate-300"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
               <textarea
                 value={promptText}
                 onChange={(e) => setPromptText(e.target.value)}
@@ -240,7 +407,7 @@ export default function App() {
                   }
                 }}
                 placeholder="What would you like to generate?"
-                className="w-full px-6 py-4 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-lg"
+                className="w-full px-6 py-4 pt-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-lg"
                 rows="3"
                 disabled={isLoading}
               />
@@ -406,6 +573,48 @@ export default function App() {
                     Use Sample
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-900 mb-2">Model Override (Optional)</label>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => handleModelChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                >
+                  <option value="">Use workflow default model</option>
+                  {availableModels.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.name} ({model.folder})
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-2 text-xs text-slate-500">
+                  {isLoadingModels
+                    ? 'Loading models...'
+                    : modelsError
+                      ? `Model lookup error: ${modelsError}`
+                      : `${availableModels.length} models available`}
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">Workflow Compatibility</p>
+                  <button
+                    type="button"
+                    onClick={handleValidateWorkflow}
+                    disabled={isValidatingWorkflow || !hasConfiguredWorkflow}
+                    className="px-3 py-1.5 bg-slate-100 text-slate-800 text-xs rounded-md font-medium hover:bg-slate-200 disabled:opacity-50"
+                  >
+                    {isValidatingWorkflow ? 'Validating...' : 'Validate with /object_info'}
+                  </button>
+                </div>
+                {validationResult && (
+                  <p className={`text-xs mt-2 ${validationResult.ok ? 'text-green-700' : 'text-red-700'}`}>
+                    {validationResult.message}
+                  </p>
+                )}
               </div>
             </div>
 
