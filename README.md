@@ -1,72 +1,147 @@
 # ComfyUI Frontend
 
-A React + Vite frontend for sending prompts to a ComfyUI server and previewing generated images.
+A React + Vite frontend for running ComfyUI workflows with a guided setup, server-side history, and operations controls.
 
 ## Requirements
 
 - Node.js 18+
-- A running ComfyUI server with API routes available
+- A running ComfyUI server with HTTP and WebSocket routes enabled
 
-## Install
+## Quick Start
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-## Run
+Start local development:
 
 ```bash
 npm run dev
 ```
 
-Then open the local URL printed by Vite (usually `http://localhost:5173`).
-
-## Build
+Build production assets:
 
 ```bash
 npm run build
 ```
 
+## App Routes
+
+- `/` main generation interface
+- `/settings` full settings and operations page
+
 ## First-Time Setup
 
-On first launch, the app shows a welcome screen, then opens Settings and requires:
+On first load, the app shows a welcome step and then directs to `/settings`.
 
-1. ComfyUI API base URL (example: `http://your-comfyui-host:8188`)
-2. A workflow JSON file
+Required setup:
 
-In Settings you can:
+1. ComfyUI API base URL (for example: `http://your-comfyui-host:8188`)
+2. Workflow JSON
 
-- Click `Test Connection` to verify the API URL
-- Upload your own workflow JSON
-- Use the bundled sample workflow
+You can provide the workflow by:
 
-The app will not allow image generation until both API URL and workflow are configured.
+- Uploading your own JSON file
+- Using the bundled sample workflow
+- Applying a server template from `/workflow_templates` (when available)
 
-## How Generation Works
+## Core Features
 
-1. You enter a prompt.
-2. The app injects that prompt into compatible text nodes in the workflow.
-3. The app POSTs the workflow to `/prompt`.
-4. It polls `/history/{prompt_id}` until completion.
-5. It resolves the output image via `/view` and displays it.
+- Real-time generation updates via ComfyUI WebSocket (`/ws`)
+- Percentage progress status during generation
+- Cancel in-progress execution (`/interrupt`)
+- Queue visibility (`/queue`)
+- Server-side recent jobs from `/history` (not local-only history)
+- Optional model override sourced from server model endpoints
+- Optional input image upload (`/upload/image`) for image-driven workflows
 
-## Stored Local Data
+## Settings Page
 
-The app stores configuration in browser local storage:
+### Configuration
+
+- API URL + connection test
+- Workflow upload/sample/template selection
+- Model override picker (server-driven)
+- Workflow compatibility check via `/object_info`
+
+### Server Dashboard
+
+Shows data from:
+
+- `/features`
+- `/system_stats`
+- `/extensions`
+- `/history` count
+
+### Ops Mode
+
+Admin actions (explicitly gated by an Ops Mode toggle):
+
+- Clear pending queue (`POST /queue`)
+- Interrupt running execution (`POST /interrupt`)
+- Clear server history (`POST /history`)
+- Free VRAM / unload models (`POST /free`)
+
+## ComfyUI API Endpoints Used
+
+- `POST /prompt`
+- `GET /history/{prompt_id}`
+- `GET /history`
+- `GET /queue`
+- `POST /queue`
+- `POST /interrupt`
+- `POST /history`
+- `POST /free`
+- `GET /object_info`
+- `GET /models/checkpoints`
+- `GET /models/diffusion_models`
+- `POST /upload/image`
+- `GET /features`
+- `GET /system_stats`
+- `GET /extensions`
+- `GET /workflow_templates`
+- `GET /view`
+- `GET /ws` (WebSocket)
+
+## Local Storage Keys
 
 - `comfy_api_url`
 - `comfy_workflow`
 - `comfy_workflow_name`
+- `comfy_selected_model`
+- `comfy_onboarding_seen`
+
+## GitHub Actions
+
+Workflows in `.github/workflows`:
+
+- `build.yml`: installs deps and runs `npm run build` on pushes/PRs
+- `deploy-pages.yml`: deploys `dist` to GitHub Pages (main branch)
+- `release.yml`: on tag `v*`, builds and attaches `dist-<tag>.zip` to GitHub Release
+
+## Release Process
+
+Recommended versioning uses git tags:
+
+```bash
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+This triggers the automated release workflow and publishes a downloadable `dist` artifact.
 
 ## Project Structure
 
-- `src/App.jsx`: main UI shell and settings/onboarding layout
-- `src/hooks/useApiConfig.js`: API URL state, persistence, and connection testing
-- `src/hooks/useWorkflowConfig.js`: workflow upload/sample selection and persistence
-- `src/hooks/useGeneration.js`: prompt submission, polling, and output resolution
+- `src/App.jsx` routed app shell (`/` and `/settings`)
+- `src/hooks/useApiConfig.js` API URL state and connection test logic
+- `src/hooks/useWorkflowConfig.js` workflow storage and selection
+- `src/hooks/useGeneration.js` generation flow, WebSocket status, queue/cancel handling
 
 ## Troubleshooting
 
-- If connection testing fails, verify the ComfyUI host/port and browser CORS/network access.
-- If generation fails with prompt-node errors, your workflow may not include compatible text input nodes.
-- If settings seem stale, clear local storage for this site and reload.
+- If model list is empty, verify the target model folder endpoints on your server (for example `/models/diffusion_models`).
+- If templates show none, your server may return an empty `/workflow_templates` payload.
+- If generation fails after upload, confirm your workflow includes compatible image input nodes.
+- If API calls fail in browser but work in curl, check CORS/network settings on the ComfyUI host.
