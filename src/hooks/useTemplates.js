@@ -6,7 +6,7 @@ import { extractIndexedTemplates, extractWorkflowTemplates } from '../lib/templa
 const REMOTE_TEMPLATES_BASE_URL = 'https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates'
 const REMOTE_TEMPLATES_INDEX_URL = `${REMOTE_TEMPLATES_BASE_URL}/index.json`
 
-export default function useTemplates({ apiUrl, uploadWorkflowFile, onSetError }) {
+export default function useTemplates({ apiUrl, uploadWorkflowFile, onSetError, onTemplateApplied }) {
   const [serverTemplates, setServerTemplates] = useState([])
   const [templateSource, setTemplateSource] = useState('none')
   const [templateSearch, setTemplateSearch] = useState('')
@@ -207,6 +207,7 @@ export default function useTemplates({ apiUrl, uploadWorkflowFile, onSetError })
       const blob = new Blob([JSON.stringify(workflowData)], { type: 'application/json' })
       const file = new File([blob], `${safeName}.json`, { type: 'application/json' })
       await uploadWorkflowFile(file)
+      onTemplateApplied?.()
       onSetError?.(null)
     } catch (err) {
       onSetError?.(`Failed to apply template: ${err.message}`)

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 import useApiConfig from './hooks/useApiConfig'
@@ -28,6 +28,7 @@ export default function App() {
   const [negativePromptText, setNegativePromptText] = useState('')
   const [promptInputMode, setPromptInputMode] = useState('single')
   const [supportsInputImage, setSupportsInputImage] = useState(false)
+  const skipWorkflowPromptDefaultsRef = useRef(false)
   const [workflowHealth, setWorkflowHealth] = useState(null)
   const [isCheckingWorkflowHealth, setIsCheckingWorkflowHealth] = useState(false)
   const [inputImageFile, setInputImageFile] = useState(null)
@@ -110,6 +111,11 @@ export default function App() {
     apiUrl,
     uploadWorkflowFile,
     onSetError: setError,
+    onTemplateApplied: () => {
+      skipWorkflowPromptDefaultsRef.current = true
+      setPromptText('')
+      setNegativePromptText('')
+    },
   })
   const {
     serverRecentJobs,
@@ -182,8 +188,9 @@ export default function App() {
   useEffect(() => {
     const promptInfo = analyzeWorkflowPromptInputs(workflow)
     setPromptInputMode(promptInfo.mode)
-    setPromptText(promptInfo.defaultPrompt)
-    setNegativePromptText(promptInfo.defaultNegativePrompt)
+    setPromptText('')
+    setNegativePromptText('')
+    skipWorkflowPromptDefaultsRef.current = false
     const supportsImage = workflowSupportsInputImage(workflow)
     setSupportsInputImage(supportsImage)
     if (!supportsImage) {
@@ -243,9 +250,12 @@ export default function App() {
   }
 
   function handleUseSampleWorkflow() {
+    skipWorkflowPromptDefaultsRef.current = true
     useSampleWorkflow()
     setError(null)
     setWorkflowHealth(null)
+    setPromptText('')
+    setNegativePromptText('')
   }
 
   function handleInputImageChange(e) {

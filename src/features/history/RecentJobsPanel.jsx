@@ -93,61 +93,58 @@ export default function RecentJobsPanel({
                   )}
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {(selectedJobId || isLoadingJobDetail || jobDetailError || jobDetail) && (
-        <div className="mt-4 border border-slate-200 rounded-lg p-4 bg-slate-50">
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-semibold text-slate-900">Job Detail</h4>
-            <div className="flex items-center gap-2">
-              {selectedJobId && (
-                <span className="text-xs text-slate-500 font-mono">{selectedJobId}</span>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedJobId(null)
-                  setJobDetail(null)
-                  setJobDetailError(null)
-                }}
-                className="text-xs text-slate-600 hover:text-slate-900"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-          {isLoadingJobDetail ? (
-            <p className="text-sm text-slate-500">Loading job details...</p>
-          ) : jobDetailError ? (
-            <p className="text-sm text-red-700">{jobDetailError}</p>
-          ) : jobDetail ? (
-            <div className="space-y-2 text-sm text-slate-700">
-              <p>Status: <span className="font-medium">{jobDetail.status}</span></p>
-              {jobDetail.workflowId && <p>Workflow ID: <span className="font-mono">{jobDetail.workflowId}</span></p>}
-              {typeof jobDetail.outputsCount === 'number' && <p>Output count: {jobDetail.outputsCount}</p>}
-              {typeof jobDetail.createTime === 'number' && (
-                <p>Created: {new Date(jobDetail.createTime * 1000).toLocaleString()}</p>
-              )}
-              {typeof jobDetail.updateTime === 'number' && (
-                <p>Updated: {new Date(jobDetail.updateTime * 1000).toLocaleString()}</p>
-              )}
-              {jobDetail.executionError && (
-                <div className="p-2 border border-red-200 bg-red-50 rounded text-red-800">
-                  <p className="font-semibold mb-1">Execution Error</p>
-                  <p className="text-xs">{jobDetail.executionError.exception_message || 'Unknown execution error'}</p>
+              {selectedJobId === job.id && (
+                <div className="mt-4 border border-slate-200 rounded-lg p-4 bg-slate-50">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-slate-900">Job Detail</h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 font-mono">{selectedJobId}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedJobId(null)
+                          setJobDetail(null)
+                          setJobDetailError(null)
+                        }}
+                        className="text-xs text-slate-600 hover:text-slate-900"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                  {isLoadingJobDetail ? (
+                    <p className="text-sm text-slate-500">Loading job details...</p>
+                  ) : jobDetailError ? (
+                    <p className="text-sm text-red-700">{jobDetailError}</p>
+                  ) : jobDetail ? (
+                    <div className="space-y-2 text-sm text-slate-700">
+                      <p>Status: <span className="font-medium">{jobDetail.status}</span></p>
+                      {jobDetail.workflowId && <p>Workflow ID: <span className="font-mono">{jobDetail.workflowId}</span></p>}
+                      {typeof jobDetail.outputsCount === 'number' && <p>Output count: {jobDetail.outputsCount}</p>}
+                      {typeof jobDetail.createTime === 'number' && (
+                        <p>Created: {new Date(jobDetail.createTime * 1000).toLocaleString()}</p>
+                      )}
+                      {typeof jobDetail.updateTime === 'number' && (
+                        <p>Updated: {new Date(jobDetail.updateTime * 1000).toLocaleString()}</p>
+                      )}
+                      {jobDetail.executionError && (
+                        <div className="p-2 border border-red-200 bg-red-50 rounded text-red-800">
+                          <p className="font-semibold mb-1">Execution Error</p>
+                          <p className="text-xs">{jobDetail.executionError.exception_message || 'Unknown execution error'}</p>
+                        </div>
+                      )}
+                      <details>
+                        <summary className="cursor-pointer text-xs text-slate-600">Raw payload</summary>
+                        <pre className="mt-2 p-2 bg-white border border-slate-200 rounded text-xs overflow-auto max-h-56">
+                          {JSON.stringify(jobDetail.raw, null, 2)}
+                        </pre>
+                      </details>
+                    </div>
+                  ) : null}
                 </div>
               )}
-              <details>
-                <summary className="cursor-pointer text-xs text-slate-600">Raw payload</summary>
-                <pre className="mt-2 p-2 bg-white border border-slate-200 rounded text-xs overflow-auto max-h-56">
-                  {JSON.stringify(jobDetail.raw, null, 2)}
-                </pre>
-              </details>
             </div>
-          ) : null}
+          ))}
         </div>
       )}
     </div>

@@ -93,7 +93,7 @@ export default function GenerationPanel({
           {promptInputMode === 'dual' && (
             <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Prompt</label>
           )}
-          <div className="relative">
+          <div>
             {supportsInputImage && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                 <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
@@ -126,31 +126,10 @@ export default function GenerationPanel({
                 }
               }}
               placeholder={promptInputMode === 'dual' ? 'Positive prompt' : 'What would you like to generate?'}
-              className={`w-full px-6 pt-4 pb-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none ${promptInputMode === 'dual' ? 'text-sm' : 'text-lg'}`}
-              rows="3"
+              className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-sm"
+              rows="2"
               disabled={isLoading}
             />
-            <div className="absolute right-4 bottom-4 flex gap-2">
-              {isLoading && (
-                <button
-                  type="button"
-                  onClick={handleCancelRun}
-                  className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 rounded-md hover:bg-red-200 transition-colors"
-                  title={currentPromptId ? `Cancel ${currentPromptId}` : 'Cancel current run'}
-                >
-                  Cancel
-                </button>
-              )}
-              <button
-                type="submit"
-                disabled={isLoading || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
-                className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
-                title={isLoading ? 'Generating...' : 'Generate image'}
-                aria-label={isLoading ? 'Generating image' : 'Generate image'}
-              >
-                <span>{isLoading ? 'Generating' : 'Generate'}</span>
-              </button>
-            </div>
           </div>
           {promptInputMode === 'dual' && (
             <div className="mt-3">
@@ -171,6 +150,27 @@ export default function GenerationPanel({
               />
             </div>
           )}
+          <div className="mt-3 flex justify-end gap-2">
+            {isLoading && (
+              <button
+                type="button"
+                onClick={handleCancelRun}
+                className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 rounded-md hover:bg-red-200 transition-colors"
+                title={currentPromptId ? `Cancel ${currentPromptId}` : 'Cancel current run'}
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={isLoading || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
+              title={isLoading ? 'Generating...' : 'Generate image'}
+              aria-label={isLoading ? 'Generating image' : 'Generate image'}
+            >
+              <span>{isLoading ? 'Generating' : 'Generate'}</span>
+            </button>
+          </div>
           <p className="text-center text-sm text-slate-500 mt-3">
             Press <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Enter</kbd> to send, <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Shift+Enter</kbd> for new line
           </p>
