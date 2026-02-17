@@ -4,10 +4,15 @@ import defaultWorkflow from '../01_get_started_text_to_image.json'
 import useApiConfig from './hooks/useApiConfig'
 import useWorkflowConfig from './hooks/useWorkflowConfig'
 import useGeneration from './hooks/useGeneration'
+import TemplateBrowser from './features/templates/TemplateBrowser'
+import TemplateModals from './features/templates/TemplateModals'
+import { buildApiUrlFromParts, normalizeBaseUrl, parseApiUrlParts } from './lib/apiUrl'
+import { collectWorkflowModelRequirements } from './lib/modelRequirements'
+import { extractIndexedTemplates, extractWorkflowTemplates } from './lib/templateIndex'
+import { analyzeWorkflowPromptInputs, extractPromptFromGraph } from './lib/workflowPrompt'
 
 const REMOTE_TEMPLATES_BASE_URL = 'https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates'
 const REMOTE_TEMPLATES_INDEX_URL = `${REMOTE_TEMPLATES_BASE_URL}/index.json`
-const EXCLUDED_TEMPLATE_TAGS = new Set(['api'])
 
 export default function App() {
   const navigate = useNavigate()
@@ -136,36 +141,6 @@ export default function App() {
     setNegativePromptText(promptInfo.defaultNegativePrompt)
   }, [workflow])
 
-  function normalizeBaseUrl(url) {
-    return url.trim().replace(/\/prompt\/?$/, '')
-  }
-
-  function parseApiUrlParts(url) {
-    const fallback = { protocol: 'http', host: '', port: '8188' }
-    const raw = (url || '').trim()
-    if (!raw) return fallback
-
-    try {
-      const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`
-      const parsed = new URL(normalized)
-      return {
-        protocol: parsed.protocol.replace(':', '') || 'http',
-        host: parsed.hostname || '',
-        port: parsed.port || '8188',
-      }
-    } catch (_) {
-      return fallback
-    }
-  }
-
-  function buildApiUrlFromParts({ protocol, host, port }) {
-    const cleanHost = String(host || '').trim()
-    if (!cleanHost) return ''
-    const cleanProtocol = protocol === 'https' ? 'https' : 'http'
-    const cleanPort = String(port || '').trim()
-    return cleanPort ? `${cleanProtocol}://${cleanHost}:${cleanPort}` : `${cleanProtocol}://${cleanHost}`
-  }
-
   function syncApiFieldsFromUrl(url) {
     const parsed = parseApiUrlParts(url)
     setApiProtocol(parsed.protocol)
@@ -183,73 +158,6 @@ export default function App() {
     const id = setTimeout(() => setToast(null), 2500)
     return () => clearTimeout(id)
   }, [toast])
-
-  function analyzeWorkflowPromptInputs(graph) {
-    if (!graph || typeof graph !== 'object') {
-      return { mode: 'single', defaultPrompt: '', defaultNegativePrompt: '' }
-    }
-
-    const positiveRefs = new Set()
-    const negativeRefs = new Set()
-    for (const node of Object.values(graph)) {
-      const classType = String(node?.class_type || '').toLowerCase()
-      if (!classType.includes('ksampler')) continue
-      const positive = node?.inputs?.positive
-      const negative = node?.inputs?.negative
-      if (Array.isArray(positive) && positive.length > 0) positiveRefs.add(String(positive[0]))
-      if (Array.isArray(negative) && negative.length > 0) negativeRefs.add(String(negative[0]))
-    }
-
-    const promptLikeNodes = []
-    for (const [nodeId, node] of Object.entries(graph)) {
-      if (!node || typeof node !== 'object') continue
-      const textValue = node?.inputs?.text
-      if (typeof textValue !== 'string') continue
-      const classType = String(node?.class_type || '').toLowerCase()
-      const title = String(node?._meta?.title || '').toLowerCase()
-      const looksLikePromptNode = classType.includes('cliptextencode') || title.includes('prompt')
-      if (!looksLikePromptNode) continue
-      const isNegative = title.includes('negative') || title.includes('neg')
-      promptLikeNodes.push({ id: String(nodeId), text: textValue, isNegative })
-    }
-
-    const firstTextForRefs = (refs) => {
-      for (const ref of refs) {
-        const textValue = graph?.[ref]?.inputs?.text
-        if (typeof textValue === 'string') return textValue
-      }
-      return ''
-    }
-
-    const mappedPrompt = firstTextForRefs(positiveRefs)
-    const mappedNegative = firstTextForRefs(negativeRefs)
-    if (positiveRefs.size > 0 || negativeRefs.size > 0) {
-      return {
-        mode: negativeRefs.size > 0 ? 'dual' : 'single',
-        defaultPrompt: mappedPrompt || '',
-        defaultNegativePrompt: mappedNegative || '',
-      }
-    }
-
-    if (promptLikeNodes.length === 0) {
-      return { mode: 'single', defaultPrompt: '', defaultNegativePrompt: '' }
-    }
-    if (promptLikeNodes.length === 1) {
-      return { mode: 'single', defaultPrompt: promptLikeNodes[0].text || '', defaultNegativePrompt: '' }
-    }
-
-    const negativeNode = promptLikeNodes.find((node) => node.isNegative)
-    const positiveNode = promptLikeNodes.find((node) => !node.isNegative) || promptLikeNodes[0]
-    if (negativeNode && positiveNode) {
-      return {
-        mode: 'dual',
-        defaultPrompt: positiveNode.text || '',
-        defaultNegativePrompt: negativeNode.text || '',
-      }
-    }
-
-    return { mode: 'single', defaultPrompt: positiveNode.text || '', defaultNegativePrompt: '' }
-  }
 
   function openSettingsPage() {
     setSettingsUrl(apiUrl)
@@ -338,153 +246,6 @@ export default function App() {
     setInputImageName('')
   }
 
-  function extractWorkflowTemplates(raw) {
-    if (!raw || typeof raw !== 'object') return []
-
-    const templates = []
-    const pushTemplate = (id, label, workflowData, extra = {}) => {
-      if (workflowData && typeof workflowData === 'object') {
-        templates.push({
-          id,
-          label,
-          title: extra.title || label,
-          description: extra.description || '',
-          mediaType: extra.mediaType || 'unknown',
-          tags: Array.isArray(extra.tags) ? extra.tags : [],
-          models: Array.isArray(extra.models) ? extra.models : [],
-          openSource: extra.openSource,
-          usage: typeof extra.usage === 'number' ? extra.usage : 0,
-          date: typeof extra.date === 'string' ? extra.date : '',
-          io: extra.io && typeof extra.io === 'object' ? extra.io : null,
-          tutorialUrl: typeof extra.tutorialUrl === 'string' ? extra.tutorialUrl : '',
-          requiresCustomNodes: Array.isArray(extra.requiresCustomNodes) ? extra.requiresCustomNodes : [],
-          includeOnDistributions: Array.isArray(extra.includeOnDistributions) ? extra.includeOnDistributions : [],
-          searchRank: typeof extra.searchRank === 'number' ? extra.searchRank : undefined,
-          size: typeof extra.size === 'number' ? extra.size : undefined,
-          vram: typeof extra.vram === 'number' ? extra.vram : undefined,
-          status: typeof extra.status === 'string' ? extra.status : '',
-          category: extra.category || 'Templates',
-          categoryGroup: extra.categoryGroup || 'Templates',
-          isEssential: Boolean(extra.isEssential),
-          thumbnailUrl: extra.thumbnailUrl || null,
-          workflowUrl: null,
-          workflow: workflowData,
-          source: 'server',
-        })
-      }
-    }
-
-    for (const [groupKey, groupValue] of Object.entries(raw)) {
-      if (Array.isArray(groupValue)) {
-        for (let i = 0; i < groupValue.length; i++) {
-          const item = groupValue[i]
-          if (!item || typeof item !== 'object') continue
-          const workflowData = item.workflow || item.prompt || item.data?.workflow || item.data?.prompt
-          const label = item.name || item.title || `${groupKey} template ${i + 1}`
-          pushTemplate(`${groupKey}:${label}:${i}`, `${groupKey}: ${label}`, workflowData, {
-            title: item.title || label,
-            description: item.description || '',
-            mediaType: item.mediaType || item.type || 'unknown',
-            tags: item.tags,
-            models: item.models,
-            openSource: item.openSource,
-            usage: item.usage,
-            date: item.date,
-            io: item.io,
-            tutorialUrl: item.tutorialUrl,
-            requiresCustomNodes: item.requiresCustomNodes,
-            includeOnDistributions: item.includeOnDistributions,
-            searchRank: item.searchRank,
-            size: item.size,
-            vram: item.vram,
-            status: item.status,
-            category: groupKey,
-            categoryGroup: 'Custom',
-          })
-        }
-      } else if (groupValue && typeof groupValue === 'object') {
-        for (const [templateKey, templateValue] of Object.entries(groupValue)) {
-          if (!templateValue || typeof templateValue !== 'object') continue
-          const workflowData = templateValue.workflow || templateValue.prompt || templateValue.data?.workflow || templateValue.data?.prompt
-          const label = templateValue.name || templateValue.title || templateKey
-          pushTemplate(`${groupKey}:${templateKey}`, `${groupKey}: ${label}`, workflowData, {
-            title: templateValue.title || label,
-            description: templateValue.description || '',
-            mediaType: templateValue.mediaType || templateValue.type || 'unknown',
-            tags: templateValue.tags,
-            models: templateValue.models,
-            openSource: templateValue.openSource,
-            usage: templateValue.usage,
-            date: templateValue.date,
-            io: templateValue.io,
-            tutorialUrl: templateValue.tutorialUrl,
-            requiresCustomNodes: templateValue.requiresCustomNodes,
-            includeOnDistributions: templateValue.includeOnDistributions,
-            searchRank: templateValue.searchRank,
-            size: templateValue.size,
-            vram: templateValue.vram,
-            status: templateValue.status,
-            category: groupKey,
-            categoryGroup: 'Custom',
-          })
-        }
-      }
-    }
-
-    return templates
-  }
-
-  function extractIndexedTemplates(raw, templatesBaseUrl, source) {
-    if (!Array.isArray(raw)) return []
-
-    const templates = []
-    for (const section of raw) {
-      if (!section || typeof section !== 'object') continue
-      const sectionTitle = section.title || section.category || section.type || 'Templates'
-      const sectionTemplates = Array.isArray(section.templates) ? section.templates : []
-      for (const template of sectionTemplates) {
-        if (!template || typeof template !== 'object') continue
-        const tags = Array.isArray(template.tags) ? template.tags : []
-        const hasExcludedTag = tags.some((tag) => EXCLUDED_TEMPLATE_TAGS.has(String(tag || '').trim().toLowerCase()))
-        const isApiBased = hasExcludedTag || template.openSource === false
-        if (isApiBased) continue
-        const name = template.name
-        if (!name || typeof name !== 'string') continue
-        const displayName = template.title || template.name
-        const mediaSubtype = template.mediaSubtype || 'webp'
-        templates.push({
-          id: `${source}:${sectionTitle}:${name}`,
-          label: `${sectionTitle}: ${displayName}`,
-          title: displayName,
-          description: template.description || '',
-          mediaType: template.mediaType || section.type || 'unknown',
-          tags,
-          models: Array.isArray(template.models) ? template.models : [],
-          openSource: template.openSource,
-          usage: typeof template.usage === 'number' ? template.usage : 0,
-          date: typeof template.date === 'string' ? template.date : '',
-          io: template.io && typeof template.io === 'object' ? template.io : null,
-          tutorialUrl: typeof template.tutorialUrl === 'string' ? template.tutorialUrl : '',
-          requiresCustomNodes: Array.isArray(template.requiresCustomNodes) ? template.requiresCustomNodes : [],
-          includeOnDistributions: Array.isArray(template.includeOnDistributions) ? template.includeOnDistributions : [],
-          searchRank: typeof template.searchRank === 'number' ? template.searchRank : undefined,
-          size: typeof template.size === 'number' ? template.size : undefined,
-          vram: typeof template.vram === 'number' ? template.vram : undefined,
-          status: typeof template.status === 'string' ? template.status : '',
-          category: sectionTitle,
-          categoryGroup: section.category || 'Templates',
-          isEssential: Boolean(section.isEssential),
-          thumbnailUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}-1.${encodeURIComponent(mediaSubtype)}`,
-          source,
-          workflowUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}.json`,
-          workflow: null,
-        })
-      }
-    }
-
-    return templates
-  }
-
   async function fetchTemplateIndex(indexUrl, templatesBaseUrl, source) {
     const res = await fetch(indexUrl)
     if (!res.ok) {
@@ -565,116 +326,6 @@ export default function App() {
     } finally {
       setIsLoadingServerData(false)
     }
-  }
-
-  function extractPromptFromGraph(graph) {
-    if (!graph || typeof graph !== 'object') return ''
-    for (const node of Object.values(graph)) {
-      const classType = String(node?.class_type || '').toLowerCase()
-      if (classType.includes('cliptextencode') && typeof node?.inputs?.text === 'string') {
-        return node.inputs.text
-      }
-    }
-    return ''
-  }
-
-  function extractRequiredModelsFromWorkflow(workflowData) {
-    const required = []
-    const seenNodes = new Set()
-    const dedupe = new Set()
-
-    function walk(value) {
-      if (!value || typeof value !== 'object') return
-      if (seenNodes.has(value)) return
-      seenNodes.add(value)
-
-      if (Array.isArray(value.models)) {
-        for (const model of value.models) {
-          if (!model || typeof model !== 'object') continue
-          const name = typeof model.name === 'string' ? model.name : ''
-          const directory = typeof model.directory === 'string' ? model.directory : ''
-          const url = typeof model.url === 'string' ? model.url : ''
-          if (!name) continue
-          const key = `${directory}::${name}::${url}`
-          if (dedupe.has(key)) continue
-          dedupe.add(key)
-          required.push({ name, directory, url })
-        }
-      }
-
-      if (Array.isArray(value)) {
-        for (const item of value) walk(item)
-        return
-      }
-      for (const nested of Object.values(value)) walk(nested)
-    }
-
-    walk(workflowData)
-    return required
-  }
-
-  function inferModelDirectory(inputName, classType) {
-    const key = String(inputName || '').toLowerCase()
-    const type = String(classType || '').toLowerCase()
-    if (key === 'ckpt_name') return 'checkpoints'
-    if (key === 'unet_name') return 'diffusion_models'
-    if (key === 'vae_name') return 'vae'
-    if (key === 'lora_name') return 'loras'
-    if (key === 'control_net_name') return 'controlnet'
-    if (key === 'style_model_name') return 'style_models'
-    if (key === 'clip_name') return type.includes('dualclip') || type.includes('cliploader') ? 'text_encoders' : null
-    if (key.endsWith('_name')) return null
-    return null
-  }
-
-  function extractNamedLoaderModelsFromWorkflow(workflowData) {
-    if (!workflowData || typeof workflowData !== 'object' || Array.isArray(workflowData)) return []
-    const requirements = []
-    const dedupe = new Set()
-
-    for (const node of Object.values(workflowData)) {
-      if (!node || typeof node !== 'object') continue
-      const inputs = node.inputs
-      if (!inputs || typeof inputs !== 'object') continue
-      const classType = String(node.class_type || '')
-
-      for (const [inputName, inputValue] of Object.entries(inputs)) {
-        if (typeof inputValue !== 'string') continue
-        const directory = inferModelDirectory(inputName, classType)
-        if (!directory) continue
-        const key = `${directory}::${inputValue}`
-        if (dedupe.has(key)) continue
-        dedupe.add(key)
-        requirements.push({
-          name: inputValue,
-          directory,
-          url: '',
-        })
-      }
-    }
-
-    return requirements
-  }
-
-  function collectWorkflowModelRequirements(workflowData) {
-    const metadataModels = extractRequiredModelsFromWorkflow(workflowData)
-    const namedModels = extractNamedLoaderModelsFromWorkflow(workflowData)
-    const merged = new Map()
-
-    for (const model of [...metadataModels, ...namedModels]) {
-      const directory = String(model?.directory || '').toLowerCase()
-      const name = String(model?.name || '')
-      if (!name || !directory) continue
-      const key = `${directory}::${name.toLowerCase()}`
-      const existing = merged.get(key)
-      if (!existing) {
-        merged.set(key, { ...model, directory, name })
-      } else if (!existing.url && model.url) {
-        merged.set(key, { ...existing, url: model.url })
-      }
-    }
-
-    return Array.from(merged.values())
   }
 
   async function evaluateWorkflowPrerequisites(workflowData) {
@@ -1619,245 +1270,39 @@ export default function App() {
       filteredTemplates,
     } = getTemplateBrowserData()
     return (
-      <div>
-        <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
-        <p className="text-xs text-slate-500 mt-1">
-          {serverTemplates.length > 0
-            ? templateSource === 'local-index'
-              ? `${serverTemplates.length} templates available from /templates/index.json`
-              : templateSource === 'remote'
-              ? `${serverTemplates.length} templates available from remote index`
-              : `${serverTemplates.length} templates available from server`
-            : 'No templates available from server or remote index'}
-        </p>
-        <div className="mt-3 border border-slate-200 rounded-xl bg-white overflow-hidden">
-          <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] min-h-[520px]">
-            <aside className="border-r border-slate-200 p-3 bg-slate-50">
-              <p className="text-sm font-semibold text-slate-900 mb-2">Templates</p>
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => setSelectedTemplateCategory('all')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                    selectedTemplateCategory === 'all'
-                      ? 'bg-slate-200 text-slate-900 font-medium'
-                      : 'text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  All Templates
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedTemplateCategory('popular')}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                    selectedTemplateCategory === 'popular'
-                      ? 'bg-slate-200 text-slate-900 font-medium'
-                      : 'text-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  Popular
-                </button>
-              </div>
-              <div className="mt-4 space-y-3">
-                {sidebarCategories.map((group) => (
-                  <div key={group.groupName}>
-                    <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                      {group.groupName}
-                    </p>
-                    <div className="space-y-1">
-                      {group.categories.map((categoryName) => (
-                        <button
-                          key={`${group.groupName}:${categoryName}`}
-                          type="button"
-                          onClick={() => setSelectedTemplateCategory(categoryName)}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                            selectedTemplateCategory === categoryName
-                              ? 'bg-slate-200 text-slate-900 font-medium'
-                              : 'text-slate-700 hover:bg-slate-100'
-                          }`}
-                        >
-                          {categoryName}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </aside>
-
-            <div className="p-4 space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <input
-                  type="text"
-                  value={templateSearch}
-                  onChange={(e) => setTemplateSearch(e.target.value)}
-                  placeholder="Search templates"
-                  className="min-w-[240px] flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTemplateSearch('')
-                    setTemplateModelFilter('')
-                    setTemplateTagFilter('')
-                    setTemplateSort('default')
-                  }}
-                  className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200"
-                >
-                  Clear Filters
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                <select
-                  value={templateModelFilter}
-                  onChange={(e) => setTemplateModelFilter(e.target.value)}
-                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                >
-                  <option value="">Model Filter</option>
-                  {availableTemplateModels.map((model) => (
-                    <option key={`model:${model}`} value={model}>{model}</option>
-                  ))}
-                </select>
-                <select
-                  value={templateTagFilter}
-                  onChange={(e) => setTemplateTagFilter(e.target.value)}
-                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                >
-                  <option value="">Tasks</option>
-                  {availableTemplateTags.map((tag) => (
-                    <option key={`tag:${tag}`} value={tag}>{tag}</option>
-                  ))}
-                </select>
-                <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 bg-slate-50">
-                  Runs On: ComfyUI
-                </div>
-                <select
-                  value={selectedTemplateCategory === 'popular' ? 'popular' : templateSort}
-                  onChange={(e) => setTemplateSort(e.target.value)}
-                  disabled={selectedTemplateCategory === 'popular'}
-                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900 disabled:opacity-50"
-                >
-                  <option value="default">Default</option>
-                  <option value="popular">Popular</option>
-                  <option value="newest">Newest</option>
-                  <option value="alphabetical">Alphabetical</option>
-                </select>
-              </div>
-              <p className="text-xs text-slate-500">
-                Showing {filteredTemplates.length} of {serverTemplates.length} templates
-              </p>
-              {filteredTemplates.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">
-                  {filteredTemplates.map((template) => (
-                    <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col">
-                      {template.thumbnailUrl ? (
-                        <img
-                          src={template.thumbnailUrl}
-                          alt={template.title || template.label}
-                          className="w-full h-32 object-cover bg-slate-100"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
-                      )}
-                      <div className="p-3 flex flex-col flex-1">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTemplateDetails(template)}
-                          className="w-full text-left text-sm font-semibold text-slate-900 line-clamp-2 hover:underline"
-                        >
-                          {template.title || template.label}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTemplateDetails(template)}
-                          className="w-full text-left text-xs text-slate-500 mt-1 line-clamp-1 hover:text-slate-700 hover:underline"
-                        >
-                          {template.description || 'No description provided'}
-                        </button>
-                        <p className="mt-2 text-[11px] text-slate-600">
-                          {(template.category || template.mediaType || 'unknown')} · In:{' '}
-                          {Array.isArray(template?.io?.inputs) && template.io.inputs.length > 0
-                            ? Array.from(new Set(template.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                            : (template.mediaType || 'unknown')}
-                          {' '}· Out:{' '}
-                          {Array.isArray(template?.io?.outputs) && template.io.outputs.length > 0
-                            ? Array.from(new Set(template.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                            : 'unknown'}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
-                          {Array.isArray(template.tags) && template.tags.length > 0 ? (
-                            <>
-                              {template.tags.slice(0, 2).map((tag) => (
-                                <span key={`${template.id}:tag:${tag}`} className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
-                                  {tag}
-                                </span>
-                              ))}
-                              {template.tags.length > 2 && (
-                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">
-                                  +{template.tags.length - 2}
-                                </span>
-                              )}
-                            </>
-                          ) : (
-                            <span className="text-slate-500">No tags</span>
-                          )}
-                        </div>
-                        <div className="mt-auto pt-3">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedTemplateDetails(template)}
-                            className="w-full text-center text-[11px] text-slate-600 hover:text-slate-900 underline decoration-dotted"
-                          >
-                            Details
-                          </button>
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              setSelectedPrereqTemplateId(template.id)
-                              await checkTemplateModels(template.id)
-                            }}
-                            disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
-                            className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
-                          >
-                            {modelCheckByTemplate[template.id]?.loading
-                              ? 'Checking prerequisites...'
-                              : isLoadingModelInventory
-                                ? 'Loading model inventory...'
-                                : 'Check Prerequisites'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => applyTemplate(template.id)}
-                            disabled={applyingTemplateId === template.id}
-                            className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
-                          >
-                            {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
-                          </button>
-                          {modelCheckByTemplate[template.id]?.error && (
-                            <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
-                          )}
-                          {modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
-                            <p className={`mt-2 text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                              {modelCheckByTemplate[template.id].missing.length === 0
-                                ? 'All required models available'
-                                : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required`}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500">
-                  {serverTemplates.length > 0 ? 'No templates match your filters.' : 'No templates loaded yet.'}
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <TemplateBrowser
+        serverTemplates={serverTemplates}
+        templateSource={templateSource}
+        selectedTemplateCategory={selectedTemplateCategory}
+        templateSort={templateSort}
+        templateSearch={templateSearch}
+        templateModelFilter={templateModelFilter}
+        templateTagFilter={templateTagFilter}
+        sidebarCategories={sidebarCategories}
+        availableTemplateModels={availableTemplateModels}
+        availableTemplateTags={availableTemplateTags}
+        filteredTemplates={filteredTemplates}
+        modelCheckByTemplate={modelCheckByTemplate}
+        isLoadingModelInventory={isLoadingModelInventory}
+        applyingTemplateId={applyingTemplateId}
+        onSelectCategory={setSelectedTemplateCategory}
+        onSearchChange={setTemplateSearch}
+        onClearFilters={() => {
+          setTemplateSearch('')
+          setTemplateModelFilter('')
+          setTemplateTagFilter('')
+          setTemplateSort('default')
+        }}
+        onModelFilterChange={setTemplateModelFilter}
+        onTagFilterChange={setTemplateTagFilter}
+        onSortChange={setTemplateSort}
+        onOpenDetails={setSelectedTemplateDetails}
+        onCheckPrerequisites={async (templateId) => {
+          setSelectedPrereqTemplateId(templateId)
+          await checkTemplateModels(templateId)
+        }}
+        onApplyTemplate={applyTemplate}
+      />
     )
   }
 
@@ -1869,196 +1314,22 @@ export default function App() {
       ? modelCheckByTemplate[selectedPrereqTemplateId]
       : null
     return (
-      <>
-        {selectedTemplateDetails && (
-          <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-xl font-semibold text-slate-900">
-                    {selectedTemplateDetails.title || selectedTemplateDetails.label}
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {selectedTemplateDetails.categoryGroup || 'Templates'} / {selectedTemplateDetails.category || 'General'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedTemplateDetails(null)}
-                  className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                >
-                  Close
-                </button>
-              </div>
-
-              {selectedTemplateDetails.thumbnailUrl && (
-                <img
-                  src={selectedTemplateDetails.thumbnailUrl}
-                  alt={selectedTemplateDetails.title || selectedTemplateDetails.label}
-                  className="mt-4 w-full h-48 object-cover rounded-lg border border-slate-200 bg-slate-100"
-                />
-              )}
-
-              <div className="mt-4 space-y-3 text-sm text-slate-700">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Description</p>
-                  <p className="mt-1 whitespace-pre-wrap break-words">
-                    {selectedTemplateDetails.description || 'No description provided'}
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Generation Type</p>
-                    <p className="mt-1">{selectedTemplateDetails.category || selectedTemplateDetails.mediaType || 'unknown'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Input Type</p>
-                    <p className="mt-1">
-                      {Array.isArray(selectedTemplateDetails?.io?.inputs) && selectedTemplateDetails.io.inputs.length > 0
-                        ? Array.from(new Set(selectedTemplateDetails.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                        : (selectedTemplateDetails.mediaType || 'unknown')}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Output Type</p>
-                    <p className="mt-1">
-                      {Array.isArray(selectedTemplateDetails?.io?.outputs) && selectedTemplateDetails.io.outputs.length > 0
-                        ? Array.from(new Set(selectedTemplateDetails.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                        : 'unknown'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</p>
-                    <p className="mt-1">{selectedTemplateDetails.source || 'unknown'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</p>
-                    <p className="mt-1">{selectedTemplateDetails.date || 'unknown'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Usage</p>
-                    <p className="mt-1">{typeof selectedTemplateDetails.usage === 'number' ? selectedTemplateDetails.usage : 'unknown'}</p>
-                  </div>
-                </div>
-
-                {Array.isArray(selectedTemplateDetails.models) && selectedTemplateDetails.models.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Models</p>
-                    <p className="mt-1 break-words">{selectedTemplateDetails.models.join(', ')}</p>
-                  </div>
-                )}
-
-                {Array.isArray(selectedTemplateDetails.tags) && selectedTemplateDetails.tags.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tags</p>
-                    <p className="mt-1 break-words">{selectedTemplateDetails.tags.join(', ')}</p>
-                  </div>
-                )}
-
-                {Array.isArray(selectedTemplateDetails.requiresCustomNodes) && selectedTemplateDetails.requiresCustomNodes.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Required Custom Nodes</p>
-                    <p className="mt-1 break-words">{selectedTemplateDetails.requiresCustomNodes.join(', ')}</p>
-                  </div>
-                )}
-
-                {selectedTemplateDetails.tutorialUrl && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tutorial URL</p>
-                    <a
-                      href={selectedTemplateDetails.tutorialUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mt-1 inline-block text-slate-900 underline break-all"
-                    >
-                      {selectedTemplateDetails.tutorialUrl}
-                    </a>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {selectedPrereqTemplate && (
-          <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-xl font-semibold text-slate-900">Prerequisites</h3>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {selectedPrereqTemplate.title || selectedPrereqTemplate.label}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPrereqTemplateId(null)}
-                  className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                >
-                  Close
-                </button>
-              </div>
-
-              {!selectedPrereqResult || selectedPrereqResult.loading ? (
-                <p className="mt-4 text-sm text-slate-600">Checking prerequisites...</p>
-              ) : selectedPrereqResult.error ? (
-                <p className="mt-4 text-sm text-red-700 break-words">{selectedPrereqResult.error}</p>
-              ) : (
-                <div className="mt-4 space-y-3">
-                  <p className={`text-sm ${selectedPrereqResult.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                    {selectedPrereqResult.missing.length === 0
-                      ? `All ${selectedPrereqResult.total} required models are available`
-                      : `${selectedPrereqResult.missing.length} missing of ${selectedPrereqResult.total} required models`}
-                  </p>
-                  {selectedPrereqResult.missing.length > 0 && (
-                    <div className="space-y-2">
-                      {selectedPrereqResult.missing.map((model) => (
-                        <div key={`modal:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-3">
-                          <p className="text-sm text-slate-700 break-all">
-                            {(model.directory || 'unknown')} / {model.name}
-                          </p>
-                          <div className="mt-2 flex gap-2">
-                            {model.url ? (
-                              <>
-                                <a
-                                  href={model.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
-                                >
-                                  Download
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!model.url) return
-                                    try {
-                                      await navigator.clipboard.writeText(model.url)
-                                      setError('Model URL copied to clipboard')
-                                    } catch (_) {
-                                      setError('Failed to copy model URL')
-                                    }
-                                  }}
-                                  className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
-                                >
-                                  Copy URL
-                                </button>
-                              </>
-                            ) : (
-                              <span className="text-xs text-slate-500">No download URL provided</span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </>
+      <TemplateModals
+        selectedTemplateDetails={selectedTemplateDetails}
+        selectedPrereqTemplate={selectedPrereqTemplate}
+        selectedPrereqResult={selectedPrereqResult}
+        onCloseDetails={() => setSelectedTemplateDetails(null)}
+        onClosePrereq={() => setSelectedPrereqTemplateId(null)}
+        onCopyModelUrl={async (url) => {
+          if (!url) return
+          try {
+            await navigator.clipboard.writeText(url)
+            setError('Model URL copied to clipboard')
+          } catch (_) {
+            setError('Failed to copy model URL')
+          }
+        }}
+      />
     )
   }
 
