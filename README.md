@@ -1,11 +1,11 @@
 # ComfyUI Frontend
 
-A React + Vite frontend for running ComfyUI workflows with a guided setup, server-side history, and operations controls.
+A React + Vite frontend for running ComfyUI workflows with guided onboarding, template browsing, prerequisite checks, server-side job history, and operations controls.
 
 ## Requirements
 
 - Node.js 18+
-- A running ComfyUI server with HTTP and WebSocket routes enabled
+- A running ComfyUI server reachable from your browser
 
 ## Quick Start
 
@@ -15,7 +15,7 @@ Install dependencies:
 npm install
 ```
 
-Start local development:
+Run development server:
 
 ```bash
 npm run dev
@@ -29,119 +29,131 @@ npm run build
 
 ## App Routes
 
-- `/` main generation interface
-- `/settings` full settings and operations page
+- `/` main generation screen
+- `/settings` full settings and server operations page
 
 ## First-Time Setup
 
-On first load, the app shows a welcome step and then directs to `/settings`.
+On first load, the app shows onboarding and routes to `/settings` until setup is complete.
 
 Required setup:
 
-1. ComfyUI API base URL (for example: `http://your-comfyui-host:8188`)
-2. Workflow JSON
+1. Configure ComfyUI API connection
+2. Select a workflow JSON
 
-You can provide the workflow by:
+### API Connection UX
+
+The API form is host-first:
+
+- Enter host/IP only (for example `10.0.0.25` or `comfy.local`)
+- Default resolved URL uses `http` and port `8188`
+- Optional advanced controls allow protocol/port overrides
+- `Test Connection` uses a timeout to fail fast on unreachable hosts
+
+### Workflow Sources
+
+You can choose a workflow by:
 
 - Uploading your own JSON file
 - Using the bundled sample workflow
-- Applying a server template from `/workflow_templates` (when available)
+- Applying templates discovered from:
+  - local `/templates/index.json` (if exposed)
+  - remote Comfy template index fallback
 
-## Core Features
+## Main Features
 
-- Real-time generation updates via ComfyUI WebSocket (`/ws`)
-- Percentage progress status during generation
-- Cancel in-progress execution (`/interrupt`)
-- Queue visibility (`/queue`)
-- Server-side recent jobs from `/history` (not local-only history)
-- Optional model override sourced from server model endpoints
-- Optional input image upload (`/upload/image`) for image-driven workflows
+- Real-time generation via WebSocket updates
+- Single or dual prompt mode (prompt + negative prompt) based on workflow analysis
+- Optional input image upload for image-based workflows
+- Queue status display and cancel running job
+- Server-backed recent jobs and per-job details
 
-## Settings Page
+## Workflow Health and Prerequisites
 
-### Configuration
+Settings includes `Check Workflow Health (/object_info + prerequisites)`:
 
-- API URL + connection test
-- Workflow upload/sample/template selection
-- Model override picker (server-driven)
-- Workflow compatibility check via `/object_info`
+- Validates required node classes against `/object_info`
+- Checks required models for the selected workflow
+- Shows missing models with download and copy URL actions
 
-### Server Dashboard
+When a template or manual JSON is applied, prerequisite checks are integrated into the flow so users can resolve missing requirements early.
 
-Shows data from:
+## Server Dashboard
 
-- `/features`
-- `/system_stats`
-- `/extensions`
-- `/history` count
+Dashboard data is loaded from server endpoints and shown as structured cards:
 
-### Ops Mode
+- ComfyUI version
+- GPU/compute devices and VRAM details
+- Feature flags (flattened and humanized)
+- Extensions count with expandable list
+- Server history item count
 
-Admin actions (explicitly gated by an Ops Mode toggle):
+## Danger Zone
 
-- Clear pending queue (`POST /queue`)
-- Interrupt running execution (`POST /interrupt`)
-- Clear server history (`POST /history`)
-- Free VRAM / unload models (`POST /free`)
+Destructive operations are grouped in a dedicated Danger Zone section:
 
-## ComfyUI API Endpoints Used
+- Clear pending queue
+- Interrupt running execution
+- Clear server history
+- Free VRAM / unload models
+
+## API Endpoints Used
+
+The frontend uses these ComfyUI-style endpoints (availability depends on server version/config):
 
 - `POST /prompt`
-- `GET /history/{prompt_id}`
-- `GET /history`
 - `GET /queue`
 - `POST /queue`
 - `POST /interrupt`
+- `GET /history`
+- `GET /history/{prompt_id}`
 - `POST /history`
 - `POST /free`
 - `GET /object_info`
-- `GET /models/checkpoints`
-- `GET /models/diffusion_models`
 - `POST /upload/image`
 - `GET /features`
 - `GET /system_stats`
 - `GET /extensions`
-- `GET /workflow_templates`
+- `GET /models`
+- `GET /{model_folder}` (per-folder model inventory checks)
 - `GET /view`
-- `GET /ws` (WebSocket)
+- `GET /templates/index.json` (local template index, when available)
+- WebSocket `GET /ws`
 
 ## Local Storage Keys
 
 - `comfy_api_url`
 - `comfy_workflow`
 - `comfy_workflow_name`
-- `comfy_selected_model`
 - `comfy_onboarding_seen`
 
-## GitHub Actions
+## CI/CD
 
 Workflows in `.github/workflows`:
 
-- `build.yml`: installs deps and runs `npm run build` on pushes/PRs
-- `deploy-pages.yml`: deploys `dist` to GitHub Pages (main branch)
-- `release.yml`: on tag `v*`, builds and attaches `dist-<tag>.zip` to GitHub Release
+- `build.yml`: install + `npm run build` on push/PR
+- `deploy-pages.yml`: deploy `dist` to GitHub Pages
+- `release.yml`: on `v*` tag, build and attach release artifact
 
 ## Release Process
 
-Recommended versioning uses git tags:
+Create and push a tag:
 
 ```bash
 git tag -a vX.Y.Z -m "Release vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-This triggers the automated release workflow and publishes a downloadable `dist` artifact.
-
 ## Project Structure
 
-- `src/App.jsx` routed app shell (`/` and `/settings`)
-- `src/hooks/useApiConfig.js` API URL state and connection test logic
-- `src/hooks/useWorkflowConfig.js` workflow storage and selection
-- `src/hooks/useGeneration.js` generation flow, WebSocket status, queue/cancel handling
+- `src/App.jsx` route shell, settings UI, templates, dashboard, danger zone
+- `src/hooks/useApiConfig.js` API URL state, connection test, persistence
+- `src/hooks/useWorkflowConfig.js` workflow persistence and selection
+- `src/hooks/useGeneration.js` generation pipeline, websocket handling, queue and history interactions
 
 ## Troubleshooting
 
-- If model list is empty, verify the target model folder endpoints on your server (for example `/models/diffusion_models`).
-- If templates show none, your server may return an empty `/workflow_templates` payload.
-- If generation fails after upload, confirm your workflow includes compatible image input nodes.
-- If API calls fail in browser but work in curl, check CORS/network settings on the ComfyUI host.
+- If `Test Connection` fails, verify host/IP, port, and browser reachability (CORS/network).
+- If templates appear empty, verify local `/templates/index.json` or network access to remote template index.
+- If generation fails with validation errors, run Workflow Health check and install missing models.
+- If model download links are shown but unavailable, verify internet access and upstream model hosting.
