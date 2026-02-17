@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+const CONNECTION_TEST_TIMEOUT_MS = 6000
+
 function normalizeApiUrl(url) {
   return url.trim().replace(/\/prompt\/?$/, '')
 }
@@ -52,15 +54,25 @@ export default function useApiConfig() {
     setIsTestingConnection(true)
     setConnectionStatus({ type: 'info', message: 'Testing connection...' })
 
+    async function fetchWithTimeout(resource) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), CONNECTION_TEST_TIMEOUT_MS)
+      try {
+        return await fetch(resource, { signal: controller.signal })
+      } finally {
+        clearTimeout(timeoutId)
+      }
+    }
+
     try {
-      const systemStatsRes = await fetch(`${cleanUrl}/system_stats`)
+      const systemStatsRes = await fetchWithTimeout(`${cleanUrl}/system_stats`)
       if (systemStatsRes.ok) {
         const next = { type: 'success', message: 'Connection successful' }
         setConnectionStatus(next)
         return { ok: true, ...next }
       }
 
-      const queueRes = await fetch(`${cleanUrl}/queue`)
+      const queueRes = await fetchWithTimeout(`${cleanUrl}/queue`)
       if (queueRes.ok) {
         const next = { type: 'success', message: 'Connection successful' }
         setConnectionStatus(next)
@@ -70,8 +82,14 @@ export default function useApiConfig() {
       const next = { type: 'error', message: `Connection failed (${systemStatsRes.status})` }
       setConnectionStatus(next)
       return { ok: false, ...next }
-    } catch (_) {
-      const next = { type: 'error', message: 'Connection failed (network/CORS error)' }
+    } catch (err) {
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError'
+      const next = {
+        type: 'error',
+        message: isTimeout
+          ? `Connection timed out after ${Math.round(CONNECTION_TEST_TIMEOUT_MS / 1000)}s`
+          : 'Connection failed (network/CORS error)',
+      }
       setConnectionStatus(next)
       return { ok: false, ...next }
     } finally {

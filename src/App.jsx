@@ -14,19 +14,21 @@ export default function App() {
   const isSettingsRoute = location.pathname === '/settings'
 
   const [promptText, setPromptText] = useState('')
+  const [negativePromptText, setNegativePromptText] = useState('')
+  const [promptInputMode, setPromptInputMode] = useState('single')
   const [showWelcome, setShowWelcome] = useState(false)
-  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('comfy_selected_model') || '')
-  const [availableModels, setAvailableModels] = useState([])
-  const [isLoadingModels, setIsLoadingModels] = useState(false)
-  const [modelsError, setModelsError] = useState(null)
-  const [validationResult, setValidationResult] = useState(null)
-  const [isValidatingWorkflow, setIsValidatingWorkflow] = useState(false)
+  const [apiHost, setApiHost] = useState('')
+  const [apiProtocol, setApiProtocol] = useState('http')
+  const [apiPort, setApiPort] = useState('8188')
+  const [showAdvancedApi, setShowAdvancedApi] = useState(false)
+  const [workflowHealth, setWorkflowHealth] = useState(null)
+  const [isCheckingWorkflowHealth, setIsCheckingWorkflowHealth] = useState(false)
   const [inputImageFile, setInputImageFile] = useState(null)
   const [inputImageName, setInputImageName] = useState('')
-  const [isOpsMode, setIsOpsMode] = useState(false)
   const [serverFeatures, setServerFeatures] = useState(null)
   const [serverSystemStats, setServerSystemStats] = useState(null)
   const [serverExtensions, setServerExtensions] = useState([])
+  const [showExtensions, setShowExtensions] = useState(false)
   const [serverHistoryCount, setServerHistoryCount] = useState(null)
   const [serverTemplates, setServerTemplates] = useState([])
   const [templateSource, setTemplateSource] = useState('none')
@@ -34,7 +36,6 @@ export default function App() {
   const [serverDataError, setServerDataError] = useState(null)
   const [templateSearch, setTemplateSearch] = useState('')
   const [applyingTemplateId, setApplyingTemplateId] = useState(null)
-  const [forceApplyByTemplate, setForceApplyByTemplate] = useState({})
   const [modelCheckByTemplate, setModelCheckByTemplate] = useState({})
   const [activePrereqTemplateId, setActivePrereqTemplateId] = useState(null)
   const [modelInventory, setModelInventory] = useState(null)
@@ -47,6 +48,7 @@ export default function App() {
   const [jobDetail, setJobDetail] = useState(null)
   const [isLoadingJobDetail, setIsLoadingJobDetail] = useState(false)
   const [jobDetailError, setJobDetailError] = useState(null)
+  const [toast, setToast] = useState(null)
   const jobPromptCacheRef = useRef({})
 
   const {
@@ -116,22 +118,124 @@ export default function App() {
 
   useEffect(() => {
     if (!isSettingsRoute || !hasConfiguredApiUrl) return
-    fetchAvailableModels()
     fetchServerData()
   }, [isSettingsRoute, hasConfiguredApiUrl, apiUrl])
+
+  useEffect(() => {
+    const promptInfo = analyzeWorkflowPromptInputs(workflow)
+    setPromptInputMode(promptInfo.mode)
+    setPromptText(promptInfo.defaultPrompt)
+    setNegativePromptText(promptInfo.defaultNegativePrompt)
+  }, [workflow])
 
   function normalizeBaseUrl(url) {
     return url.trim().replace(/\/prompt\/?$/, '')
   }
 
-  function formatModelValue(folder, modelName) {
-    return `${folder}::${modelName}`
+  function parseApiUrlParts(url) {
+    const fallback = { protocol: 'http', host: '', port: '8188' }
+    const raw = (url || '').trim()
+    if (!raw) return fallback
+
+    try {
+      const normalized = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`
+      const parsed = new URL(normalized)
+      return {
+        protocol: parsed.protocol.replace(':', '') || 'http',
+        host: parsed.hostname || '',
+        port: parsed.port || '8188',
+      }
+    } catch (_) {
+      return fallback
+    }
   }
 
-  function parseModelValue(value) {
-    if (!value) return { folder: null, name: '' }
-    const [folder, ...rest] = value.split('::')
-    return { folder: rest.length > 0 ? folder : null, name: rest.length > 0 ? rest.join('::') : value }
+  function buildApiUrlFromParts({ protocol, host, port }) {
+    const cleanHost = String(host || '').trim()
+    if (!cleanHost) return ''
+    const cleanProtocol = protocol === 'https' ? 'https' : 'http'
+    const cleanPort = String(port || '').trim()
+    return cleanPort ? `${cleanProtocol}://${cleanHost}:${cleanPort}` : `${cleanProtocol}://${cleanHost}`
+  }
+
+  useEffect(() => {
+    const parsed = parseApiUrlParts(settingsUrl)
+    setApiProtocol(parsed.protocol)
+    setApiHost(parsed.host)
+    setApiPort(parsed.port)
+  }, [settingsUrl])
+
+  useEffect(() => {
+    if (!toast) return
+    const id = setTimeout(() => setToast(null), 2500)
+    return () => clearTimeout(id)
+  }, [toast])
+
+  function analyzeWorkflowPromptInputs(graph) {
+    if (!graph || typeof graph !== 'object') {
+      return { mode: 'single', defaultPrompt: '', defaultNegativePrompt: '' }
+    }
+
+    const positiveRefs = new Set()
+    const negativeRefs = new Set()
+    for (const node of Object.values(graph)) {
+      const classType = String(node?.class_type || '').toLowerCase()
+      if (!classType.includes('ksampler')) continue
+      const positive = node?.inputs?.positive
+      const negative = node?.inputs?.negative
+      if (Array.isArray(positive) && positive.length > 0) positiveRefs.add(String(positive[0]))
+      if (Array.isArray(negative) && negative.length > 0) negativeRefs.add(String(negative[0]))
+    }
+
+    const promptLikeNodes = []
+    for (const [nodeId, node] of Object.entries(graph)) {
+      if (!node || typeof node !== 'object') continue
+      const textValue = node?.inputs?.text
+      if (typeof textValue !== 'string') continue
+      const classType = String(node?.class_type || '').toLowerCase()
+      const title = String(node?._meta?.title || '').toLowerCase()
+      const looksLikePromptNode = classType.includes('cliptextencode') || title.includes('prompt')
+      if (!looksLikePromptNode) continue
+      const isNegative = title.includes('negative') || title.includes('neg')
+      promptLikeNodes.push({ id: String(nodeId), text: textValue, isNegative })
+    }
+
+    const firstTextForRefs = (refs) => {
+      for (const ref of refs) {
+        const textValue = graph?.[ref]?.inputs?.text
+        if (typeof textValue === 'string') return textValue
+      }
+      return ''
+    }
+
+    const mappedPrompt = firstTextForRefs(positiveRefs)
+    const mappedNegative = firstTextForRefs(negativeRefs)
+    if (positiveRefs.size > 0 || negativeRefs.size > 0) {
+      return {
+        mode: negativeRefs.size > 0 ? 'dual' : 'single',
+        defaultPrompt: mappedPrompt || '',
+        defaultNegativePrompt: mappedNegative || '',
+      }
+    }
+
+    if (promptLikeNodes.length === 0) {
+      return { mode: 'single', defaultPrompt: '', defaultNegativePrompt: '' }
+    }
+    if (promptLikeNodes.length === 1) {
+      return { mode: 'single', defaultPrompt: promptLikeNodes[0].text || '', defaultNegativePrompt: '' }
+    }
+
+    const negativeNode = promptLikeNodes.find((node) => node.isNegative)
+    const positiveNode = promptLikeNodes.find((node) => !node.isNegative) || promptLikeNodes[0]
+    if (negativeNode && positiveNode) {
+      return {
+        mode: 'dual',
+        defaultPrompt: positiveNode.text || '',
+        defaultNegativePrompt: negativeNode.text || '',
+      }
+    }
+
+    return { mode: 'single', defaultPrompt: positiveNode.text || '', defaultNegativePrompt: '' }
   }
 
   function openSettingsPage() {
@@ -145,16 +249,39 @@ export default function App() {
     navigate('/settings')
   }
 
+  function showToast(message, type = 'success') {
+    setToast({ message, type })
+  }
+
+  function updateApiSettings(next) {
+    const nextProtocol = next.protocol ?? apiProtocol
+    const nextHost = next.host ?? apiHost
+    const nextPort = next.port ?? apiPort
+
+    setApiProtocol(nextProtocol)
+    setApiHost(nextHost)
+    setApiPort(nextPort)
+    setSettingsUrl(buildApiUrlFromParts({
+      protocol: nextProtocol,
+      host: nextHost,
+      port: nextPort,
+    }))
+  }
+
   async function handleWorkflowUpload(e) {
     const file = e.target.files?.[0]
     if (!file) return
 
     try {
+      const raw = await file.text()
+      const parsed = JSON.parse(raw)
+      const workflowCandidate = parsed?.prompt && typeof parsed.prompt === 'object' ? parsed.prompt : parsed
       await uploadWorkflowFile(file)
       setError(null)
-      setValidationResult(null)
+      await runWorkflowHealthCheck(workflowCandidate)
     } catch (err) {
       setError(`Failed to parse JSON: ${err.message}`)
+      setWorkflowHealth(null)
     } finally {
       e.target.value = ''
     }
@@ -163,107 +290,7 @@ export default function App() {
   function handleUseSampleWorkflow() {
     useSampleWorkflow()
     setError(null)
-    setValidationResult(null)
-  }
-
-  async function fetchAvailableModels() {
-    if (!apiUrl) return
-
-    setIsLoadingModels(true)
-    setModelsError(null)
-    try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const folders = ['checkpoints', 'diffusion_models']
-      const results = await Promise.all(
-        folders.map(async (folder) => {
-          const res = await fetch(`${baseUrl}/models/${folder}`)
-          if (!res.ok) return []
-          const data = await res.json()
-          if (!Array.isArray(data)) return []
-          return data.map((name) => ({
-            folder,
-            name,
-            value: formatModelValue(folder, name),
-          }))
-        })
-      )
-
-      const models = results.flat()
-      setAvailableModels(models)
-
-      if (selectedModel && !models.some((model) => model.value === selectedModel)) {
-        setSelectedModel('')
-        localStorage.removeItem('comfy_selected_model')
-      }
-    } catch (err) {
-      setModelsError(String(err))
-    } finally {
-      setIsLoadingModels(false)
-    }
-  }
-
-  function handleModelChange(value) {
-    setSelectedModel(value)
-    if (value) {
-      localStorage.setItem('comfy_selected_model', value)
-    } else {
-      localStorage.removeItem('comfy_selected_model')
-    }
-  }
-
-  async function handleValidateWorkflow() {
-    if (!apiUrl) {
-      setValidationResult({ ok: false, message: 'Configure API URL first' })
-      return
-    }
-    if (!workflow) {
-      setValidationResult({ ok: false, message: 'Upload a workflow first' })
-      return
-    }
-
-    setIsValidatingWorkflow(true)
-    try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const res = await fetch(`${baseUrl}/object_info`)
-      if (!res.ok) {
-        throw new Error(`Validation request failed: ${res.status}`)
-      }
-
-      const objectInfo = await res.json()
-      const classesInWorkflow = Array.from(
-        new Set(
-          Object.values(workflow)
-            .map((node) => node?.class_type)
-            .filter((classType) => typeof classType === 'string')
-        )
-      )
-      const missingClasses = classesInWorkflow.filter((classType) => !(classType in objectInfo))
-
-      if (missingClasses.length > 0) {
-        setValidationResult({
-          ok: false,
-          message: `Missing node classes: ${missingClasses.join(', ')}`,
-          missingClasses,
-          checkedAt: new Date().toISOString(),
-        })
-      } else {
-        setValidationResult({
-          ok: true,
-          message: 'Workflow is compatible with this server',
-          missingClasses: [],
-          checkedAt: new Date().toISOString(),
-        })
-      }
-    } catch (err) {
-      setValidationResult({
-        ok: false,
-        message: String(err),
-        missingClasses: [],
-        checkedAt: new Date().toISOString(),
-      })
-    } finally {
-      setIsValidatingWorkflow(false)
-    }
+    setWorkflowHealth(null)
   }
 
   function handleInputImageChange(e) {
@@ -491,6 +518,100 @@ export default function App() {
     return required
   }
 
+  function inferModelDirectory(inputName, classType) {
+    const key = String(inputName || '').toLowerCase()
+    const type = String(classType || '').toLowerCase()
+    if (key === 'ckpt_name') return 'checkpoints'
+    if (key === 'unet_name') return 'diffusion_models'
+    if (key === 'vae_name') return 'vae'
+    if (key === 'lora_name') return 'loras'
+    if (key === 'control_net_name') return 'controlnet'
+    if (key === 'style_model_name') return 'style_models'
+    if (key === 'clip_name') return type.includes('dualclip') || type.includes('cliploader') ? 'text_encoders' : null
+    if (key.endsWith('_name')) return null
+    return null
+  }
+
+  function extractNamedLoaderModelsFromWorkflow(workflowData) {
+    if (!workflowData || typeof workflowData !== 'object' || Array.isArray(workflowData)) return []
+    const requirements = []
+    const dedupe = new Set()
+
+    for (const node of Object.values(workflowData)) {
+      if (!node || typeof node !== 'object') continue
+      const inputs = node.inputs
+      if (!inputs || typeof inputs !== 'object') continue
+      const classType = String(node.class_type || '')
+
+      for (const [inputName, inputValue] of Object.entries(inputs)) {
+        if (typeof inputValue !== 'string') continue
+        const directory = inferModelDirectory(inputName, classType)
+        if (!directory) continue
+        const key = `${directory}::${inputValue}`
+        if (dedupe.has(key)) continue
+        dedupe.add(key)
+        requirements.push({
+          name: inputValue,
+          directory,
+          url: '',
+        })
+      }
+    }
+
+    return requirements
+  }
+
+  function collectWorkflowModelRequirements(workflowData) {
+    const metadataModels = extractRequiredModelsFromWorkflow(workflowData)
+    const namedModels = extractNamedLoaderModelsFromWorkflow(workflowData)
+    const merged = new Map()
+
+    for (const model of [...metadataModels, ...namedModels]) {
+      const directory = String(model?.directory || '').toLowerCase()
+      const name = String(model?.name || '')
+      if (!name || !directory) continue
+      const key = `${directory}::${name.toLowerCase()}`
+      const existing = merged.get(key)
+      if (!existing) {
+        merged.set(key, { ...model, directory, name })
+      } else if (!existing.url && model.url) {
+        merged.set(key, { ...existing, url: model.url })
+      }
+    }
+
+    return Array.from(merged.values())
+  }
+
+  async function evaluateWorkflowPrerequisites(workflowData) {
+    const baseUrl = normalizeBaseUrl(apiUrl)
+    const inventory = await fetchModelInventory(baseUrl)
+    if (!inventory) {
+      throw new Error('Model inventory is still loading, please retry')
+    }
+
+    const requiredModels = collectWorkflowModelRequirements(workflowData)
+    const missing = []
+    let available = 0
+    for (const model of requiredModels) {
+      const folderKey = String(model.directory || '').toLowerCase()
+      const nameKey = String(model.name || '').toLowerCase()
+      const folderEntries = inventory[folderKey]
+      const exists = folderEntries instanceof Set ? folderEntries.has(nameKey) : false
+      if (exists) {
+        available += 1
+      } else {
+        missing.push(model)
+      }
+    }
+
+    return {
+      missing,
+      available,
+      total: requiredModels.length,
+      checkedAt: new Date().toISOString(),
+    }
+  }
+
   async function fetchModelInventory(baseUrl) {
     if (modelInventory) return modelInventory
     if (isLoadingModelInventory) return null
@@ -554,28 +675,9 @@ export default function App() {
     }))
 
     try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const inventory = await fetchModelInventory(baseUrl)
-      if (!inventory) {
-        throw new Error('Model inventory is still loading, please retry')
-      }
-
       const workflowData = options.workflowData || await loadTemplateWorkflowData(template)
-
-      const requiredModels = extractRequiredModelsFromWorkflow(workflowData)
-      const missing = []
-      let available = 0
-      for (const model of requiredModels) {
-        const folderKey = String(model.directory || '').toLowerCase()
-        const nameKey = String(model.name || '').toLowerCase()
-        const folderEntries = inventory[folderKey]
-        const exists = folderEntries instanceof Set ? folderEntries.has(nameKey) : false
-        if (exists) {
-          available += 1
-        } else {
-          missing.push(model)
-        }
-      }
+      const result = await evaluateWorkflowPrerequisites(workflowData)
+      const { missing, available, total, checkedAt } = result
 
       setModelCheckByTemplate((current) => ({
         ...current,
@@ -584,21 +686,11 @@ export default function App() {
           error: null,
           missing,
           available,
-          total: requiredModels.length,
-          checkedAt: new Date().toISOString(),
+          total,
+          checkedAt,
         },
       }))
-      if (missing.length === 0) {
-        setForceApplyByTemplate((current) => ({ ...current, [templateId]: false }))
-      }
-      return {
-        loading: false,
-        error: null,
-        missing,
-        available,
-        total: requiredModels.length,
-        checkedAt: new Date().toISOString(),
-      }
+      return { loading: false, error: null, ...result }
     } catch (err) {
       const errorValue = String(err)
       setModelCheckByTemplate((current) => ({
@@ -606,6 +698,82 @@ export default function App() {
         [templateId]: { loading: false, error: errorValue, missing: [], available: 0, total: 0 },
       }))
       return { loading: false, error: errorValue, missing: [], available: 0, total: 0 }
+    }
+  }
+
+  async function runWorkflowHealthCheck(workflowData = workflow) {
+    if (!apiUrl) {
+      setWorkflowHealth({
+        ok: false,
+        message: 'Configure API URL first.',
+        missingClasses: [],
+        missing: [],
+        available: 0,
+        total: 0,
+        checkedAt: new Date().toISOString(),
+      })
+      return
+    }
+    if (!workflowData || typeof workflowData !== 'object') {
+      setWorkflowHealth({
+        ok: false,
+        message: 'Upload a workflow first.',
+        missingClasses: [],
+        missing: [],
+        available: 0,
+        total: 0,
+        checkedAt: new Date().toISOString(),
+      })
+      return
+    }
+
+    setIsCheckingWorkflowHealth(true)
+    setWorkflowHealth(null)
+    try {
+      const baseUrl = normalizeBaseUrl(apiUrl)
+      const res = await fetch(`${baseUrl}/object_info`)
+      if (!res.ok) {
+        throw new Error(`Validation request failed: ${res.status}`)
+      }
+      const objectInfo = await res.json()
+      const classesInWorkflow = Array.from(
+        new Set(
+          Object.values(workflowData)
+            .map((node) => node?.class_type)
+            .filter((classType) => typeof classType === 'string')
+        )
+      )
+      const missingClasses = classesInWorkflow.filter((classType) => !(classType in objectInfo))
+      const prereq = await evaluateWorkflowPrerequisites(workflowData)
+
+      const ok = missingClasses.length === 0 && prereq.missing.length === 0
+      let message = 'Workflow is compatible and prerequisites are satisfied.'
+      if (missingClasses.length > 0 && prereq.missing.length > 0) {
+        message = `Missing node classes (${missingClasses.length}) and missing models (${prereq.missing.length}).`
+      } else if (missingClasses.length > 0) {
+        message = `Missing node classes: ${missingClasses.join(', ')}`
+      } else if (prereq.missing.length > 0) {
+        message = `Missing models: ${prereq.missing.length} of ${prereq.total}`
+      }
+
+      setWorkflowHealth({
+        ok,
+        message,
+        missingClasses,
+        ...prereq,
+      })
+    } catch (err) {
+      setWorkflowHealth({
+        ok: false,
+        message: String(err),
+        missingClasses: [],
+        missing: [],
+        available: 0,
+        total: 0,
+        checkedAt: new Date().toISOString(),
+      })
+    } finally {
+      setIsCheckingWorkflowHealth(false)
     }
   }
 
@@ -816,7 +984,7 @@ export default function App() {
     }
   }
 
-  async function applyTemplate(templateId, options = {}) {
+  async function applyTemplate(templateId) {
     const template = serverTemplates.find((entry) => entry.id === templateId)
     if (!template) {
       setError('Selected template not found')
@@ -832,9 +1000,8 @@ export default function App() {
       }
 
       const hasMissingPrereqs = Array.isArray(check?.missing) && check.missing.length > 0
-      if (hasMissingPrereqs && !options.force) {
-        setForceApplyByTemplate((current) => ({ ...current, [templateId]: true }))
-        setError(`Missing prerequisites: ${check.missing.length} models not installed. Review and use "Force Apply Anyway" if needed.`)
+      if (hasMissingPrereqs) {
+        setError(`Missing prerequisites: ${check.missing.length} models not installed. Install missing models before applying this template.`)
         return
       }
 
@@ -842,9 +1009,7 @@ export default function App() {
       const blob = new Blob([JSON.stringify(workflowData)], { type: 'application/json' })
       const file = new File([blob], `${safeName}.json`, { type: 'application/json' })
       await uploadWorkflowFile(file)
-      setForceApplyByTemplate((current) => ({ ...current, [templateId]: false }))
       setError(null)
-      setValidationResult(null)
     } catch (err) {
       setError(`Failed to apply template: ${err.message}`)
     } finally {
@@ -903,6 +1068,7 @@ export default function App() {
       return
     }
     setError(null)
+    showToast('Settings saved')
     navigate('/')
   }
 
@@ -917,12 +1083,15 @@ export default function App() {
     e?.preventDefault()
     await generate({
       promptText,
+      negativePromptText,
       apiUrl,
       workflow,
       openSettings: openSettingsPage,
-      selectedModel,
       inputImageFile,
-      onSuccess: () => setPromptText(''),
+      onSuccess: () => {
+        setPromptText('')
+        setNegativePromptText('')
+      },
     })
   }
 
@@ -1005,11 +1174,6 @@ export default function App() {
                   <span className={`px-2 py-1 rounded-full font-medium ${hasConfiguredWorkflow ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                     Workflow: {hasConfiguredWorkflow ? workflowName : 'Missing'}
                   </span>
-                  {selectedModel && (
-                    <span className="px-2 py-1 rounded-full font-medium bg-blue-100 text-blue-700">
-                      Model: {parseModelValue(selectedModel).name}
-                    </span>
-                  )}
                   {typeof queueState.running === 'number' && typeof queueState.pending === 'number' && (
                     <span className="px-2 py-1 rounded-full font-medium bg-slate-200 text-slate-700">
                       Queue: {queueState.running} running, {queueState.pending} pending
@@ -1027,6 +1191,9 @@ export default function App() {
                 )}
               </div>
 
+              {promptInputMode === 'dual' && (
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Prompt</label>
+              )}
               <div className="relative">
                 <div className="absolute left-4 top-4 z-10">
                   <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
@@ -1057,8 +1224,8 @@ export default function App() {
                       handleGenerate(e)
                     }
                   }}
-                  placeholder="What would you like to generate?"
-                  className="w-full px-6 py-4 pt-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-lg"
+                  placeholder={promptInputMode === 'dual' ? 'Positive prompt' : 'What would you like to generate?'}
+                  className={`w-full px-6 py-4 pt-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none ${promptInputMode === 'dual' ? 'text-sm' : 'text-lg'}`}
                   rows="3"
                   disabled={isLoading}
                 />
@@ -1075,7 +1242,7 @@ export default function App() {
                   )}
                   <button
                     type="submit"
-                    disabled={isLoading || !promptText.trim() || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
+                    disabled={isLoading || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
                     className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
                     title={isLoading ? 'Generating...' : 'Generate image'}
                     aria-label={isLoading ? 'Generating image' : 'Generate image'}
@@ -1084,6 +1251,25 @@ export default function App() {
                   </button>
                 </div>
               </div>
+              {promptInputMode === 'dual' && (
+                <div className="mt-3">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Negative Prompt</label>
+                  <textarea
+                    value={negativePromptText}
+                    onChange={(e) => setNegativePromptText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        handleGenerate(e)
+                      }
+                    }}
+                    placeholder="Negative prompt"
+                    className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-sm"
+                    rows="2"
+                    disabled={isLoading}
+                  />
+                </div>
+              )}
               <p className="text-center text-sm text-slate-500 mt-3">
                 Press <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Enter</kbd> to send, <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Shift+Enter</kbd> for new line
               </p>
@@ -1257,6 +1443,8 @@ export default function App() {
   }
 
   function renderSettingsPage() {
+    const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
+    const canSaveSettings = isApiDirty || !canCloseSettings
     const normalizedQuery = templateSearch.trim().toLowerCase()
     const filteredTemplates = normalizedQuery
       ? serverTemplates.filter((template) => {
@@ -1273,6 +1461,72 @@ export default function App() {
         return haystack.includes(normalizedQuery)
       })
       : serverTemplates
+    const featureEntries = (() => {
+      if (!serverFeatures || typeof serverFeatures !== 'object') return []
+      const rows = []
+      const walk = (prefix, value) => {
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+          for (const [nestedKey, nestedValue] of Object.entries(value)) {
+            walk(prefix ? `${prefix}.${nestedKey}` : nestedKey, nestedValue)
+          }
+          return
+        }
+        rows.push([prefix, value])
+      }
+      walk('', serverFeatures)
+      return rows
+    })()
+
+    const prettyFeatureLabel = (key) =>
+      key
+        .split('.')
+        .map((segment) =>
+          segment
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (match) => match.toUpperCase())
+        )
+        .join(' / ')
+
+    const prettyFeatureValue = (value, key) => {
+      if (typeof value === 'boolean') return value ? 'Enabled' : 'Disabled'
+      if (typeof value === 'number') {
+        if (key.includes('max_upload_size')) {
+          if (value >= 1024 * 1024) return `${Math.round((value / (1024 * 1024)) * 10) / 10} MB`
+        }
+        return String(value)
+      }
+      if (value == null) return 'N/A'
+      return String(value)
+    }
+    const formatBytes = (bytes) => {
+      if (typeof bytes !== 'number' || Number.isNaN(bytes)) return 'N/A'
+      const gb = bytes / (1024 * 1024 * 1024)
+      if (gb >= 1) return `${Math.round(gb * 10) / 10} GB`
+      const mb = bytes / (1024 * 1024)
+      return `${Math.round(mb)} MB`
+    }
+    const formatDeviceName = (rawName, fallbackIndex) => {
+      if (!rawName || typeof rawName !== 'string') return `Device ${fallbackIndex}`
+      let name = rawName
+      if (name.includes(': ')) {
+        name = name.split(': ')[0]
+      }
+      if (name.includes(' ')) {
+        const firstSpace = name.indexOf(' ')
+        const maybePrefix = name.slice(0, firstSpace)
+        if (/^[a-z]+:\d+$/i.test(maybePrefix)) {
+          name = name.slice(firstSpace + 1)
+        }
+      }
+      return name.trim() || `Device ${fallbackIndex}`
+    }
+    const formatExtensionLabel = (ext, idx) => {
+      if (typeof ext === 'string') return ext
+      if (ext && typeof ext === 'object') {
+        return ext.name || ext.title || ext.id || `Extension ${idx + 1}`
+      }
+      return `Extension ${idx + 1}`
+    }
 
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -1285,7 +1539,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="px-4 py-2 bg-white border border-slate-300 text-slate-800 rounded-lg hover:bg-slate-100"
+              className="px-4 py-2 bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200"
             >
               Back to App
             </button>
@@ -1300,25 +1554,82 @@ export default function App() {
 
             <section className="space-y-3">
               <h2 className="text-xl font-semibold">ComfyUI API</h2>
-              <input
-                type="text"
-                value={settingsUrl}
-                onChange={(e) => setSettingsUrl(e.target.value)}
-                placeholder="http://your-comfyui-host:8188"
-                className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
-              />
-              <p className="text-xs text-slate-500">Enter the base URL without /prompt</p>
-              <button
-                type="button"
-                onClick={handleTestConnection}
-                disabled={isTestingConnection}
-                className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 transition-colors"
-              >
-                {isTestingConnection ? 'Testing...' : 'Test Connection'}
-              </button>
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700">Host or IP</label>
+                <input
+                  type="text"
+                  value={apiHost}
+                  onChange={(e) => updateApiSettings({ host: e.target.value })}
+                  placeholder="10.18.20.10 or comfy.local"
+                  className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
+                />
+                <p className="text-xs text-slate-500">
+                  Default connection uses <span className="font-mono">http</span> on port <span className="font-mono">8188</span>.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedApi((current) => !current)}
+                  className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                >
+                  {showAdvancedApi ? 'Hide Advanced URL Options' : 'Show Advanced URL Options'}
+                </button>
+                {showAdvancedApi && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Protocol</label>
+                        <select
+                          value={apiProtocol}
+                          onChange={(e) => updateApiSettings({ protocol: e.target.value })}
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                        >
+                          <option value="http">http</option>
+                          <option value="https">https</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 mb-1">Port</label>
+                        <input
+                          type="text"
+                          value={apiPort}
+                          onChange={(e) => updateApiSettings({ port: e.target.value.replace(/[^0-9]/g, '') })}
+                          placeholder="8188"
+                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-slate-500">
+                  Resolved URL: <span className="font-mono">{settingsUrl || 'not set'}</span>
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection}
+                  className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                >
+                  {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSettings}
+                  disabled={!canSaveSettings}
+                  className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {canCloseSettings ? 'Save' : 'Save and Continue'}
+                </button>
+              </div>
               {connectionStatus && (
                 <p className={`text-xs ${connectionStatus.type === 'success' ? 'text-green-700' : connectionStatus.type === 'error' ? 'text-red-700' : 'text-slate-500'}`}>
                   {connectionStatus.message}
+                </p>
+              )}
+              {canCloseSettings && isApiDirty && (
+                <p className="text-xs text-slate-500">
+                  You have unsaved API changes.
                 </p>
               )}
             </section>
@@ -1339,6 +1650,76 @@ export default function App() {
                   Use Sample
                 </button>
               </div>
+              <button
+                type="button"
+                onClick={() => runWorkflowHealthCheck()}
+                disabled={isCheckingWorkflowHealth || !hasConfiguredWorkflow}
+                className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50"
+              >
+                {isCheckingWorkflowHealth ? 'Checking workflow health...' : 'Check Workflow Health (/object_info + prerequisites)'}
+              </button>
+              {workflowHealth && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold text-slate-700">Workflow Health</p>
+                  <p className={`text-xs mt-1 ${workflowHealth.ok ? 'text-green-700' : 'text-amber-700'}`}>
+                    {workflowHealth.message}
+                  </p>
+                  {Array.isArray(workflowHealth.missingClasses) && workflowHealth.missingClasses.length > 0 && (
+                    <p className="text-xs text-red-700 mt-1 break-words">
+                      Missing classes: {workflowHealth.missingClasses.join(', ')}
+                    </p>
+                  )}
+                  {workflowHealth.total > 0 && (
+                    <p className={`text-xs mt-1 ${workflowHealth.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                      {workflowHealth.missing.length === 0
+                        ? `All ${workflowHealth.total} required models are available`
+                        : `${workflowHealth.missing.length} missing of ${workflowHealth.total} required models`}
+                    </p>
+                  )}
+                  {Array.isArray(workflowHealth.missing) && workflowHealth.missing.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {workflowHealth.missing.map((model) => (
+                        <div key={`health:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-white p-2">
+                          <p className="text-xs text-slate-700 break-all">
+                            {(model.directory || 'unknown')} / {model.name}
+                          </p>
+                          <div className="mt-1 flex gap-2">
+                            {model.url ? (
+                              <>
+                                <a
+                                  href={model.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
+                                >
+                                  Download
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!model.url) return
+                                    try {
+                                      await navigator.clipboard.writeText(model.url)
+                                      setError('Model URL copied to clipboard')
+                                    } catch (_) {
+                                      setError('Failed to copy model URL')
+                                    }
+                                  }}
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
+                                >
+                                  Copy URL
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-500">No download URL provided</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
@@ -1393,16 +1774,6 @@ export default function App() {
                           >
                             {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
                           </button>
-                          {forceApplyByTemplate[template.id] && (
-                            <button
-                              type="button"
-                              onClick={() => applyTemplate(template.id, { force: true })}
-                              disabled={applyingTemplateId === template.id}
-                              className="mt-2 w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200 disabled:opacity-60"
-                            >
-                              {applyingTemplateId === template.id ? 'Applying...' : 'Force Apply Anyway'}
-                            </button>
-                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -1490,48 +1861,6 @@ export default function App() {
             </section>
 
             <section className="space-y-3 border-t border-slate-200 pt-6">
-              <h2 className="text-xl font-semibold">Model Override</h2>
-              <select
-                value={selectedModel}
-                onChange={(e) => handleModelChange(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-              >
-                <option value="">Use workflow default model</option>
-                {availableModels.map((model) => (
-                  <option key={model.value} value={model.value}>
-                    {model.name} ({model.folder})
-                  </option>
-                ))}
-              </select>
-              <div className="text-xs text-slate-500">
-                {isLoadingModels
-                  ? 'Loading models...'
-                  : modelsError
-                    ? `Model lookup error: ${modelsError}`
-                    : `${availableModels.length} models available`}
-              </div>
-            </section>
-
-            <section className="space-y-3 border-t border-slate-200 pt-6">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xl font-semibold">Workflow Compatibility</h2>
-                <button
-                  type="button"
-                  onClick={handleValidateWorkflow}
-                  disabled={isValidatingWorkflow || !hasConfiguredWorkflow}
-                  className="px-3 py-1.5 bg-slate-100 text-slate-800 text-xs rounded-md font-medium hover:bg-slate-200 disabled:opacity-50"
-                >
-                  {isValidatingWorkflow ? 'Validating...' : 'Validate with /object_info'}
-                </button>
-              </div>
-              {validationResult && (
-                <p className={`text-xs ${validationResult.ok ? 'text-green-700' : 'text-red-700'}`}>
-                  {validationResult.message}
-                </p>
-              )}
-            </section>
-
-            <section className="space-y-3 border-t border-slate-200 pt-6">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="text-xl font-semibold">Server Dashboard</h2>
                 <button
@@ -1547,89 +1876,158 @@ export default function App() {
               ) : serverDataError ? (
                 <p className="text-xs text-red-700">{serverDataError}</p>
               ) : (
-                <div className="space-y-1 text-sm text-slate-600">
-                  <p>ComfyUI version: {serverSystemStats?.system?.comfyui_version || 'unknown'}</p>
-                  <p>GPU devices: {Array.isArray(serverSystemStats?.devices) ? serverSystemStats.devices.length : 0}</p>
-                  <p>Extensions: {serverExtensions.length}</p>
-                  <p>Server history items: {serverHistoryCount ?? 'unknown'}</p>
-                  <p>Features: {serverFeatures ? Object.keys(serverFeatures).length : 0} keys</p>
+                <div className="space-y-3 text-sm text-slate-600">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-[11px] font-medium text-slate-500">ComfyUI Version</p>
+                      <p className="text-sm font-semibold text-slate-800 break-all">{serverSystemStats?.system?.comfyui_version || 'unknown'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-[11px] font-medium text-slate-500">GPU Devices</p>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {Array.isArray(serverSystemStats?.devices) ? serverSystemStats.devices.length : 0}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Extensions</p>
+                          <p className="text-sm font-semibold text-slate-800">{serverExtensions.length}</p>
+                        </div>
+                        {serverExtensions.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowExtensions((current) => !current)}
+                            className="text-xs px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                          >
+                            {showExtensions ? 'Hide' : 'Show'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                      <p className="text-[11px] font-medium text-slate-500">Server History Items</p>
+                      <p className="text-sm font-semibold text-slate-800">{serverHistoryCount ?? 'unknown'}</p>
+                    </div>
+                  </div>
+                  {showExtensions && serverExtensions.length > 0 && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                      <ul className="space-y-1">
+                        {serverExtensions.map((ext, idx) => (
+                          <li key={`${formatExtensionLabel(ext, idx)}-${idx}`} className="text-xs text-slate-700 break-all">
+                            {formatExtensionLabel(ext, idx)}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {Array.isArray(serverSystemStats?.devices) && serverSystemStats.devices.length > 0 && (
+                    <div className="pt-1">
+                      <p className="font-medium text-slate-700">Compute Devices</p>
+                      <div className="mt-2 space-y-2">
+                        {serverSystemStats.devices.map((device, idx) => (
+                          <div key={`${device?.name || 'device'}-${idx}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                            <p className="text-sm font-semibold text-slate-800 break-all">{formatDeviceName(device?.name, idx)}</p>
+                            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-600">
+                              <p>Type: <span className="font-medium text-slate-700">{device?.type || 'unknown'}</span></p>
+                              <p>Index: <span className="font-medium text-slate-700">{typeof device?.index === 'number' ? device.index : idx}</span></p>
+                              <p>VRAM total: <span className="font-medium text-slate-700">{formatBytes(device?.vram_total)}</span></p>
+                              <p>VRAM free: <span className="font-medium text-slate-700">{formatBytes(device?.vram_free)}</span></p>
+                              <p>Torch VRAM total: <span className="font-medium text-slate-700">{formatBytes(device?.torch_vram_total)}</span></p>
+                              <p>Torch VRAM free: <span className="font-medium text-slate-700">{formatBytes(device?.torch_vram_free)}</span></p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {featureEntries.length > 0 ? (
+                    <div className="pt-1">
+                      <p className="font-medium text-slate-700">Features</p>
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {featureEntries.map(([key, rawValue]) => (
+                          <div key={key} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                            <p className="text-[11px] font-medium text-slate-500">{prettyFeatureLabel(key)}</p>
+                            <p className="text-sm font-semibold text-slate-800 break-all">
+                              {prettyFeatureValue(rawValue, key)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p>Features: none reported</p>
+                  )}
                 </div>
               )}
             </section>
 
             <section className="space-y-3 border-t border-slate-200 pt-6">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xl font-semibold">Ops Mode</h2>
-                <label className="inline-flex items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={isOpsMode}
-                    onChange={(e) => setIsOpsMode(e.target.checked)}
-                  />
-                  Enable admin actions
-                </label>
-              </div>
-              {isOpsMode ? (
-                <div className="space-y-2">
+              <h2 className="text-3xl font-semibold text-slate-900">Danger Zone</h2>
+              <div className="rounded-xl border border-red-200 overflow-hidden bg-white">
+                <div className="p-5 flex items-start justify-between gap-6 border-b border-slate-200">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Clear Pending Queue</h3>
+                    <p className="text-sm text-slate-700 mt-1">Remove all queued pending jobs that have not started yet.</p>
+                  </div>
                   <button
                     type="button"
                     onClick={handleClearPendingQueue}
-                    className="w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200"
+                    className="shrink-0 px-5 py-2.5 border border-slate-300 rounded-xl text-red-700 text-sm font-semibold hover:bg-red-50"
                   >
-                    Clear Pending Queue
+                    Clear pending
                   </button>
+                </div>
+
+                <div className="p-5 flex items-start justify-between gap-6 border-b border-slate-200">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Interrupt Running Execution</h3>
+                    <p className="text-sm text-slate-700 mt-1">Stop currently running generation jobs on the server.</p>
+                  </div>
                   <button
                     type="button"
                     onClick={handleInterruptExecution}
-                    className="w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200"
+                    className="shrink-0 px-5 py-2.5 border border-slate-300 rounded-xl text-red-700 text-sm font-semibold hover:bg-red-50"
                   >
-                    Interrupt Running Execution
+                    Interrupt execution
                   </button>
+                </div>
+
+                <div className="p-5 flex items-start justify-between gap-6 border-b border-slate-200">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Clear Server History</h3>
+                    <p className="text-sm text-slate-700 mt-1">Delete historical job records from the ComfyUI server.</p>
+                  </div>
                   <button
                     type="button"
                     onClick={handleClearServerHistory}
-                    className="w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200"
+                    className="shrink-0 px-5 py-2.5 border border-slate-300 rounded-xl text-red-700 text-sm font-semibold hover:bg-red-50"
                   >
-                    Clear Server History
+                    Clear history
                   </button>
+                </div>
+
+                <div className="p-5 flex items-start justify-between gap-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Free VRAM / Unload Models</h3>
+                    <p className="text-sm text-slate-700 mt-1">Release runtime memory and unload models to recover from memory pressure.</p>
+                  </div>
                   <button
                     type="button"
                     onClick={handleFreeMemory}
-                    className="w-full px-3 py-2 bg-amber-100 text-amber-900 text-sm rounded-lg font-medium hover:bg-amber-200"
+                    className="shrink-0 px-5 py-2.5 border border-slate-300 rounded-xl text-red-700 text-sm font-semibold hover:bg-red-50"
                   >
-                    Free VRAM / Unload Models
+                    Free memory
                   </button>
-                  {opsActionStatus && (
-                    <p className={`text-xs ${opsActionStatus.ok ? 'text-green-700' : 'text-red-700'}`}>
-                      {opsActionStatus.message}
-                    </p>
-                  )}
                 </div>
-              ) : (
-                <p className="text-xs text-slate-500">
-                  Enable Ops Mode to access queue, history, and memory controls.
+              </div>
+              {opsActionStatus && (
+                <p className={`text-xs ${opsActionStatus.ok ? 'text-green-700' : 'text-red-700'}`}>
+                  {opsActionStatus.message}
                 </p>
               )}
             </section>
 
-            <div className="border-t border-slate-200 pt-6 flex gap-3">
-              <button
-                type="button"
-                onClick={handleSaveSettings}
-                className="flex-1 px-4 py-2 bg-slate-900 text-white font-semibold rounded-lg hover:bg-slate-800 transition-colors"
-              >
-                {canCloseSettings ? 'Save' : 'Save and Continue'}
-              </button>
-              {canCloseSettings && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  className="flex-1 px-4 py-2 bg-slate-200 text-slate-900 font-semibold rounded-lg hover:bg-slate-300 transition-colors"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
           </div>
         </div>
       </div>
@@ -1637,10 +2035,23 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/" element={renderHomePage()} />
-      <Route path="/settings" element={renderSettingsPage()} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={renderHomePage()} />
+        <Route path="/settings" element={renderSettingsPage()} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {toast && (
+        <div className="fixed right-4 bottom-4 z-[80]">
+          <div className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium ${
+            toast.type === 'error'
+              ? 'bg-red-100 text-red-800 border border-red-200'
+              : 'bg-green-100 text-green-800 border border-green-200'
+          }`}>
+            {toast.message}
+          </div>
+        </div>
+      )}
+    </>
   )
 }

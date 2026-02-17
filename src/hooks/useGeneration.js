@@ -32,56 +32,79 @@ function buildWebSocketUrl(baseUrl, clientId) {
   return url.toString()
 }
 
-function injectPromptIntoWorkflow(runGraph, prompt) {
-  let updatedCount = 0
+function getPromptTargets(runGraph) {
+  const positiveSamplerTargets = new Set()
+  const negativeSamplerTargets = new Set()
+  const genericPromptTargets = []
+  const genericNegativeTargets = []
 
-  for (const nodeId of Object.keys(runGraph)) {
-    const node = runGraph[nodeId]
-    if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
-      continue
-    }
+  const isTextNode = (node) => !!(node && typeof node === 'object' && node.inputs && typeof node.inputs.text === 'string')
 
+  for (const node of Object.values(runGraph || {})) {
+    const classType = String(node?.class_type || '').toLowerCase()
+    if (!classType.includes('ksampler')) continue
+    const positiveRef = node?.inputs?.positive
+    const negativeRef = node?.inputs?.negative
+    if (Array.isArray(positiveRef) && positiveRef.length > 0) positiveSamplerTargets.add(String(positiveRef[0]))
+    if (Array.isArray(negativeRef) && negativeRef.length > 0) negativeSamplerTargets.add(String(negativeRef[0]))
+  }
+
+  for (const [nodeId, node] of Object.entries(runGraph || {})) {
+    if (!isTextNode(node)) continue
+    const id = String(nodeId)
     const classType = String(node.class_type || '').toLowerCase()
     const title = String(node._meta?.title || '').toLowerCase()
-    const hasTextInput = typeof node.inputs.text === 'string'
-    const looksLikePromptNode = classType.includes('cliptextencode') || title.includes('prompt')
+    const looksPromptLike = classType.includes('cliptextencode') || title.includes('prompt')
+    if (!looksPromptLike) continue
 
-    if (hasTextInput && looksLikePromptNode) {
-      node.inputs.text = prompt
-      updatedCount++
+    const looksNegative = title.includes('negative') || title.includes('neg')
+    if (positiveSamplerTargets.has(id)) {
+      genericPromptTargets.push(id)
+      continue
+    }
+    if (negativeSamplerTargets.has(id)) {
+      genericNegativeTargets.push(id)
+      continue
+    }
+    if (looksNegative) {
+      genericNegativeTargets.push(id)
+    } else {
+      genericPromptTargets.push(id)
     }
   }
 
-  return updatedCount
+  const promptTargets = genericPromptTargets.length > 0
+    ? genericPromptTargets
+    : Array.from(positiveSamplerTargets).filter((id) => isTextNode(runGraph[id]))
+  const negativeTargets = genericNegativeTargets.length > 0
+    ? genericNegativeTargets
+    : Array.from(negativeSamplerTargets).filter((id) => isTextNode(runGraph[id]))
+
+  return {
+    promptTargets,
+    negativeTargets,
+  }
 }
 
-function parseSelectedModel(selectedModel) {
-  if (!selectedModel) return { folder: null, name: null }
-  if (!selectedModel.includes('::')) return { folder: null, name: selectedModel }
-
-  const [folder, ...rest] = selectedModel.split('::')
-  return { folder, name: rest.join('::') || null }
-}
-
-function injectModelIntoWorkflow(runGraph, selectedModel) {
-  const parsed = parseSelectedModel(selectedModel)
-  if (!parsed.name) return 0
-
+function injectPromptValuesIntoWorkflow(runGraph, prompt, negativePrompt) {
+  const { promptTargets, negativeTargets } = getPromptTargets(runGraph)
   let updatedCount = 0
-  for (const nodeId of Object.keys(runGraph)) {
-    const node = runGraph[nodeId]
-    if (!node || typeof node !== 'object' || !node.inputs || typeof node.inputs !== 'object') {
-      continue
-    }
 
-    const classType = String(node.class_type || '').toLowerCase()
-    if ((parsed.folder === 'checkpoints' || parsed.folder === null) && classType.includes('checkpointloader') && typeof node.inputs.ckpt_name === 'string') {
-      node.inputs.ckpt_name = parsed.name
-      updatedCount++
+  if (prompt) {
+    for (const nodeId of promptTargets) {
+      if (runGraph[nodeId]?.inputs && typeof runGraph[nodeId].inputs.text === 'string') {
+        runGraph[nodeId].inputs.text = prompt
+        updatedCount++
+      }
     }
-    if ((parsed.folder === 'diffusion_models' || parsed.folder === null) && classType === 'unetloader' && typeof node.inputs.unet_name === 'string') {
-      node.inputs.unet_name = parsed.name
-      updatedCount++
+  }
+
+  if (negativePrompt) {
+    for (const nodeId of negativeTargets) {
+      if (runGraph[nodeId]?.inputs && typeof runGraph[nodeId].inputs.text === 'string') {
+        runGraph[nodeId].inputs.text = negativePrompt
+        updatedCount++
+      }
     }
   }
 
@@ -106,6 +129,72 @@ function injectImageIntoWorkflow(runGraph, imageName) {
   }
 
   return updatedCount
+}
+
+function extractPromptValidationIssue(payload) {
+  const nodeErrors = payload?.node_errors
+  if (!nodeErrors || typeof nodeErrors !== 'object') return null
+
+  for (const [nodeId, nodeError] of Object.entries(nodeErrors)) {
+    const errors = Array.isArray(nodeError?.errors) ? nodeError.errors : []
+    for (const err of errors) {
+      if (err?.type !== 'value_not_in_list') continue
+      const inputName = err?.extra_info?.input_name
+      const receivedValue = err?.extra_info?.received_value
+      const configuredValues = err?.extra_info?.input_config?.[0]
+      const availableValues = Array.isArray(configuredValues) ? configuredValues : []
+      return {
+        nodeId,
+        classType: nodeError?.class_type || null,
+        inputName: typeof inputName === 'string' ? inputName : null,
+        receivedValue: typeof receivedValue === 'string' ? receivedValue : null,
+        availableValues,
+      }
+    }
+  }
+
+  return null
+}
+
+function applyValidationFallback(runGraph, payload) {
+  const issue = extractPromptValidationIssue(payload)
+  if (!issue || !issue.inputName) return { applied: false, issue }
+  if (!Array.isArray(issue.availableValues) || issue.availableValues.length === 0) {
+    return { applied: false, issue }
+  }
+  if (!runGraph?.[issue.nodeId]?.inputs || typeof runGraph[issue.nodeId].inputs !== 'object') {
+    return { applied: false, issue }
+  }
+  if (typeof runGraph[issue.nodeId].inputs[issue.inputName] !== 'string') {
+    return { applied: false, issue }
+  }
+
+  runGraph[issue.nodeId].inputs[issue.inputName] = issue.availableValues[0]
+  return { applied: true, issue, replacementValue: issue.availableValues[0] }
+}
+
+function buildQueueErrorMessage(status, payload) {
+  if (!payload || typeof payload !== 'object') {
+    return `Queue request failed: ${status}`
+  }
+
+  const issue = extractPromptValidationIssue(payload)
+  if (issue) {
+    const settingName = issue.inputName || 'model value'
+    const wanted = issue.receivedValue || 'workflow default'
+    const availableCount = Array.isArray(issue.availableValues) ? issue.availableValues.length : 0
+    if (availableCount === 0) {
+      return `Template model validation failed: ${settingName} '${wanted}' is not installed, and no compatible server models are available.`
+    }
+    return `Template model validation failed: ${settingName} '${wanted}' is unavailable. ${availableCount} compatible models were found on the server.`
+  }
+
+  const apiMessage = payload?.error?.message
+  if (typeof apiMessage === 'string' && apiMessage) {
+    return `Queue request failed: ${apiMessage}`
+  }
+
+  return `Queue request failed: ${status}`
 }
 
 export default function useGeneration() {
@@ -195,14 +284,13 @@ export default function useGeneration() {
 
   const generate = useCallback(async ({
     promptText,
+    negativePromptText,
     apiUrl,
     workflow,
     openSettings,
-    selectedModel,
     inputImageFile,
     onSuccess,
   }) => {
-    if (!promptText.trim()) return
     if (!apiUrl) {
       setError('Configure your ComfyUI API URL in Settings to generate images')
       openSettings()
@@ -219,11 +307,15 @@ export default function useGeneration() {
     setImageSrc(null)
     setStatusMessage('Queued')
     cancelRequestedRef.current = false
+    const normalizedPrompt = promptText.trim()
+    const normalizedNegativePrompt = (negativePromptText || '').trim()
 
     const historyItemId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
     addHistoryItem({
       id: historyItemId,
-      prompt: promptText.trim(),
+      prompt: normalizedPrompt
+        ? (normalizedNegativePrompt ? `${normalizedPrompt} | Negative: ${normalizedNegativePrompt}` : normalizedPrompt)
+        : (normalizedNegativePrompt ? `(negative) ${normalizedNegativePrompt}` : '(workflow defaults)'),
       status: 'running',
       createdAt: new Date().toISOString(),
       imageSrc: null,
@@ -234,15 +326,11 @@ export default function useGeneration() {
 
     try {
       const runGraph = JSON.parse(JSON.stringify(workflow))
-      const updatedPromptNodes = injectPromptIntoWorkflow(runGraph, promptText)
-      if (updatedPromptNodes === 0) {
-        throw new Error('No prompt text node found in workflow (expected a CLIPTextEncode-style node with an inputs.text field)')
+      if (normalizedPrompt || normalizedNegativePrompt) {
+        injectPromptValuesIntoWorkflow(runGraph, normalizedPrompt, normalizedNegativePrompt)
       }
 
       const baseUrl = apiUrl.replace(/\/prompt\/?$/, '')
-      if (selectedModel) {
-        injectModelIntoWorkflow(runGraph, selectedModel)
-      }
 
       if (inputImageFile) {
         const body = new FormData()
@@ -334,12 +422,38 @@ export default function useGeneration() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: runGraph, client_id: clientId }),
       })
+      let finalQueueRes = queueRes
+      if (!finalQueueRes.ok && finalQueueRes.status === 400) {
+        let queueErrorPayload = null
+        try {
+          queueErrorPayload = await finalQueueRes.json()
+        } catch (_) {
+          queueErrorPayload = null
+        }
 
-      if (!queueRes.ok) {
-        throw new Error(`Queue request failed: ${queueRes.status}`)
+        const fallback = applyValidationFallback(runGraph, queueErrorPayload)
+        if (fallback.applied) {
+          setStatusMessage(`Retrying with available server model: ${fallback.replacementValue}`)
+          finalQueueRes = await fetch(`${baseUrl}/prompt`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: runGraph, client_id: clientId }),
+          })
+        } else {
+          throw new Error(buildQueueErrorMessage(finalQueueRes.status, queueErrorPayload))
+        }
+      }
+      if (!finalQueueRes.ok) {
+        let queueErrorPayload = null
+        try {
+          queueErrorPayload = await finalQueueRes.json()
+        } catch (_) {
+          queueErrorPayload = null
+        }
+        throw new Error(buildQueueErrorMessage(finalQueueRes.status, queueErrorPayload))
       }
 
-      const queueData = await queueRes.json()
+      const queueData = await finalQueueRes.json()
       const promptId = queueData.prompt_id
 
       if (!promptId) {
