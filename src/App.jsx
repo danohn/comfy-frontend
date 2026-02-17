@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 import useApiConfig from './hooks/useApiConfig'
+import useRecentJobs from './hooks/useRecentJobs'
 import useWorkflowConfig from './hooks/useWorkflowConfig'
 import useGeneration from './hooks/useGeneration'
 import TemplateBrowser from './features/templates/TemplateBrowser'
@@ -9,10 +10,11 @@ import TemplateModals from './features/templates/TemplateModals'
 import OnboardingPage from './features/onboarding/OnboardingPage'
 import SettingsPage from './features/settings/SettingsPage'
 import HomePage from './features/home/HomePage'
+import { getTemplateBrowserData } from './features/templates/templateBrowserData'
 import { buildApiUrlFromParts, normalizeBaseUrl, parseApiUrlParts } from './lib/apiUrl'
 import { collectWorkflowModelRequirements } from './lib/modelRequirements'
 import { extractIndexedTemplates, extractWorkflowTemplates } from './lib/templateIndex'
-import { analyzeWorkflowPromptInputs, extractPromptFromGraph } from './lib/workflowPrompt'
+import { analyzeWorkflowPromptInputs } from './lib/workflowPrompt'
 
 const REMOTE_TEMPLATES_BASE_URL = 'https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates'
 const REMOTE_TEMPLATES_INDEX_URL = `${REMOTE_TEMPLATES_BASE_URL}/index.json`
@@ -56,16 +58,8 @@ export default function App() {
   const [modelInventory, setModelInventory] = useState(null)
   const [isLoadingModelInventory, setIsLoadingModelInventory] = useState(false)
   const [opsActionStatus, setOpsActionStatus] = useState(null)
-  const [serverRecentJobs, setServerRecentJobs] = useState([])
-  const [isLoadingRecentJobs, setIsLoadingRecentJobs] = useState(false)
-  const [recentJobsError, setRecentJobsError] = useState(null)
-  const [selectedJobId, setSelectedJobId] = useState(null)
-  const [jobDetail, setJobDetail] = useState(null)
-  const [isLoadingJobDetail, setIsLoadingJobDetail] = useState(false)
-  const [jobDetailError, setJobDetailError] = useState(null)
   const [toast, setToast] = useState(null)
   const [onboardingStep, setOnboardingStep] = useState(1)
-  const jobPromptCacheRef = useRef({})
 
   const {
     apiUrl,
@@ -99,6 +93,20 @@ export default function App() {
     cancelCurrentRun,
     generate,
   } = useGeneration()
+  const {
+    serverRecentJobs,
+    isLoadingRecentJobs,
+    recentJobsError,
+    selectedJobId,
+    setSelectedJobId,
+    jobDetail,
+    setJobDetail,
+    isLoadingJobDetail,
+    jobDetailError,
+    setJobDetailError,
+    fetchRecentHistory,
+    fetchJobDetail,
+  } = useRecentJobs(apiUrl)
 
   const canCloseSettings = hasConfiguredApiUrl && hasConfiguredWorkflow
 
@@ -509,213 +517,6 @@ export default function App() {
     }
   }
 
-  function extractImageFromOutputObject(outputObject) {
-    if (!outputObject || typeof outputObject !== 'object') return null
-
-    const baseUrl = normalizeBaseUrl(apiUrl)
-    const buildViewUrl = (fileObject) => {
-      if (!fileObject || typeof fileObject !== 'object') return null
-      const filename = fileObject.filename
-      if (!filename) return null
-      const subfolder = fileObject.subfolder || ''
-      const type = fileObject.type || 'output'
-      return `${baseUrl}/view?filename=${encodeURIComponent(filename)}&subfolder=${encodeURIComponent(subfolder)}&type=${encodeURIComponent(type)}`
-    }
-
-    // /api/jobs preview_output is often a direct file object, not images/video arrays.
-    const directUrl = buildViewUrl(outputObject)
-    if (directUrl) return directUrl
-
-    const imageLists = []
-    if (Array.isArray(outputObject.images)) imageLists.push(outputObject.images)
-    if (Array.isArray(outputObject.video)) imageLists.push(outputObject.video)
-    if (Array.isArray(outputObject.audio)) imageLists.push(outputObject.audio)
-
-    for (const list of imageLists) {
-      if (list.length === 0) continue
-      const url = buildViewUrl(list[0])
-      if (url) return url
-    }
-
-    return null
-  }
-
-  function parseHistoryEntries(historyObject) {
-    const entries = Object.entries(historyObject || {}).map(([promptId, record]) => {
-      const graph = record?.prompt?.[2]
-      const prompt = extractPromptFromGraph(graph) || '(prompt unavailable)'
-      const status = record?.status?.status_str || (record?.status?.completed ? 'success' : 'unknown')
-      const messages = Array.isArray(record?.status?.messages) ? record.status.messages : []
-      const startMessage = messages.find((msg) => Array.isArray(msg) && msg[0] === 'execution_start')
-      const startTimestamp = startMessage?.[1]?.timestamp
-      const createdAt = typeof startTimestamp === 'number'
-        ? new Date(startTimestamp).toISOString()
-        : new Date().toISOString()
-
-      let imageSrc = null
-      if (record?.outputs && typeof record.outputs === 'object') {
-        for (const output of Object.values(record.outputs)) {
-          imageSrc = extractImageFromOutputObject(output)
-          if (imageSrc) break
-        }
-      }
-
-      return {
-        id: promptId,
-        prompt,
-        status,
-        createdAt,
-        imageSrc,
-      }
-    })
-
-    return entries
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 20)
-  }
-
-  function parseApiJobsEntries(jobsArray) {
-    return (Array.isArray(jobsArray) ? jobsArray : [])
-      .map((job) => {
-        const jobId = job?.id || job?.prompt_id || `${Math.random()}`
-        const cachedPrompt = jobPromptCacheRef.current[jobId]
-        const prompt = cachedPrompt || job?.prompt || null
-        const createdAt = (() => {
-          if (typeof job?.create_time !== 'number') return new Date().toISOString()
-          const createMs = job.create_time > 1e12 ? job.create_time : job.create_time * 1000
-          return new Date(createMs).toISOString()
-        })()
-        const status = job?.status || 'unknown'
-        const previewOutput = job?.preview_output
-        const imageSrc = extractImageFromOutputObject(previewOutput)
-
-        return {
-          id: jobId,
-          title: job?.name || `Job ${String(jobId).slice(0, 8)}`,
-          prompt,
-          status,
-          createdAt,
-          imageSrc,
-          source: 'api-jobs',
-        }
-      })
-      .slice(0, 20)
-  }
-
-  async function hydrateRecentJobPrompts(baseUrl, jobs) {
-    const candidates = jobs.filter((job) => !job.prompt && !jobPromptCacheRef.current[job.id]).slice(0, 6)
-    if (candidates.length === 0) return
-
-    await Promise.all(
-      candidates.map(async (job) => {
-        try {
-          const res = await fetch(`${baseUrl}/history/${encodeURIComponent(job.id)}`)
-          if (!res.ok) return
-          const detail = await res.json()
-          const record = detail?.[job.id] || Object.values(detail || {})[0]
-          const graph = record?.prompt?.[2]
-          const extractedPrompt = extractPromptFromGraph(graph)
-          if (!extractedPrompt) return
-          jobPromptCacheRef.current[job.id] = extractedPrompt
-        } catch (_) {
-          // Ignore per-job prompt hydration failures.
-        }
-      })
-    )
-
-    setServerRecentJobs((current) =>
-      current.map((job) => ({
-        ...job,
-        prompt: job.prompt || jobPromptCacheRef.current[job.id] || null,
-      }))
-    )
-  }
-
-  async function fetchRecentHistory() {
-    if (!apiUrl) return
-
-    setIsLoadingRecentJobs(true)
-    setRecentJobsError(null)
-    try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const jobsRes = await fetch(`${baseUrl}/api/jobs?limit=20&offset=0&sort_by=created_at&sort_order=desc`)
-      if (jobsRes.ok) {
-        const jobsData = await jobsRes.json()
-        const parsedJobs = parseApiJobsEntries(jobsData?.jobs)
-        if (parsedJobs.length > 0) {
-          setServerRecentJobs(parsedJobs)
-          hydrateRecentJobPrompts(baseUrl, parsedJobs)
-          return
-        }
-      }
-
-      const res = await fetch(`${baseUrl}/history`)
-      if (!res.ok) {
-        throw new Error(`History request failed: ${res.status}`)
-      }
-      const historyData = await res.json()
-      setServerRecentJobs(parseHistoryEntries(historyData))
-    } catch (err) {
-      setRecentJobsError(String(err))
-    } finally {
-      setIsLoadingRecentJobs(false)
-    }
-  }
-
-  async function fetchJobDetail(jobId) {
-    if (!apiUrl || !jobId) return
-
-    setSelectedJobId(jobId)
-    setIsLoadingJobDetail(true)
-    setJobDetailError(null)
-    try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const jobsDetailRes = await fetch(`${baseUrl}/api/jobs/${encodeURIComponent(jobId)}`)
-      if (jobsDetailRes.ok) {
-        const detail = await jobsDetailRes.json()
-        setJobDetail({
-          source: 'api-jobs',
-          id: detail?.id || jobId,
-          status: detail?.status || 'unknown',
-          createTime: detail?.create_time,
-          updateTime: detail?.update_time,
-          workflowId: detail?.workflow_id || null,
-          outputsCount: detail?.outputs_count ?? null,
-          executionError: detail?.execution_error || null,
-          raw: detail,
-        })
-        return
-      }
-
-      const historyRes = await fetch(`${baseUrl}/history/${encodeURIComponent(jobId)}`)
-      if (!historyRes.ok) {
-        throw new Error(`Job detail request failed: ${jobsDetailRes.status}`)
-      }
-      const historyDetail = await historyRes.json()
-      const record = historyDetail?.[jobId] || Object.values(historyDetail || {})[0]
-      if (!record || typeof record !== 'object') {
-        throw new Error('No detail found for selected job')
-      }
-
-      setJobDetail({
-        source: 'history',
-        id: jobId,
-        status: record?.status?.status_str || (record?.status?.completed ? 'success' : 'unknown'),
-        createTime: null,
-        updateTime: null,
-        workflowId: null,
-        outputsCount: record?.outputs ? Object.keys(record.outputs).length : 0,
-        executionError: null,
-        raw: record,
-      })
-    } catch (err) {
-      setJobDetail(null)
-      setJobDetailError(String(err))
-    } finally {
-      setIsLoadingJobDetail(false)
-    }
-  }
-
   async function applyTemplate(templateId) {
     const template = serverTemplates.find((entry) => entry.id === templateId)
     if (!template) {
@@ -889,101 +690,20 @@ export default function App() {
     )
   }
 
-  function getTemplateBrowserData() {
-    const normalizedQuery = templateSearch.trim().toLowerCase()
-    const sidebarCategories = (() => {
-      const groups = new Map()
-      for (const template of serverTemplates) {
-        const groupName = template.categoryGroup || 'Templates'
-        const categoryName = template.category || 'Templates'
-        if (!groups.has(groupName)) groups.set(groupName, new Set())
-        groups.get(groupName).add(categoryName)
-      }
-      return Array.from(groups.entries())
-        .map(([groupName, set]) => ({
-          groupName,
-          categories: Array.from(set).sort((a, b) => a.localeCompare(b)),
-        }))
-        .sort((a, b) => a.groupName.localeCompare(b.groupName))
-    })()
-    const availableTemplateModels = Array.from(
-      new Set(
-        serverTemplates.flatMap((template) =>
-          Array.isArray(template.models) ? template.models : []
-        )
-      )
-    ).sort((a, b) => a.localeCompare(b))
-    const availableTemplateTags = Array.from(
-      new Set(
-        serverTemplates.flatMap((template) =>
-          Array.isArray(template.tags) ? template.tags : []
-        )
-      )
-    ).sort((a, b) => a.localeCompare(b))
-    const filteredTemplates = (() => {
-      let list = [...serverTemplates]
-
-      if (selectedTemplateCategory !== 'all' && selectedTemplateCategory !== 'popular') {
-        list = list.filter((template) => (template.category || 'Templates') === selectedTemplateCategory)
-      }
-      if (templateModelFilter) {
-        list = list.filter((template) => (template.models || []).includes(templateModelFilter))
-      }
-      if (templateTagFilter) {
-        list = list.filter((template) => (template.tags || []).includes(templateTagFilter))
-      }
-      if (normalizedQuery) {
-        list = list.filter((template) => {
-          const haystack = [
-            template.title,
-            template.label,
-            template.description,
-            ...(Array.isArray(template.tags) ? template.tags : []),
-            ...(Array.isArray(template.models) ? template.models : []),
-            template.mediaType,
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase()
-          return haystack.includes(normalizedQuery)
-        })
-      }
-
-      const effectiveSort = selectedTemplateCategory === 'popular' ? 'popular' : templateSort
-      list.sort((a, b) => {
-        if (effectiveSort === 'popular') {
-          return (b.usage || 0) - (a.usage || 0)
-        }
-        if (effectiveSort === 'newest') {
-          const aTime = a.date ? new Date(a.date).getTime() : 0
-          const bTime = b.date ? new Date(b.date).getTime() : 0
-          return bTime - aTime
-        }
-        if (effectiveSort === 'alphabetical') {
-          return String(a.title || a.label || '').localeCompare(String(b.title || b.label || ''))
-        }
-        const usageDiff = (b.usage || 0) - (a.usage || 0)
-        if (usageDiff !== 0) return usageDiff
-        return String(a.title || a.label || '').localeCompare(String(b.title || b.label || ''))
-      })
-
-      return list
-    })()
-    return {
-      sidebarCategories,
-      availableTemplateModels,
-      availableTemplateTags,
-      filteredTemplates,
-    }
-  }
-
   function renderTemplateBrowser() {
     const {
       sidebarCategories,
       availableTemplateModels,
       availableTemplateTags,
       filteredTemplates,
-    } = getTemplateBrowserData()
+    } = getTemplateBrowserData({
+      serverTemplates,
+      templateSearch,
+      selectedTemplateCategory,
+      templateModelFilter,
+      templateTagFilter,
+      templateSort,
+    })
     return (
       <TemplateBrowser
         serverTemplates={serverTemplates}
