@@ -1523,9 +1523,7 @@ export default function App() {
     )
   }
 
-  function renderSettingsPage() {
-    const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
-    const canSaveSettings = isApiDirty
+  function getTemplateBrowserData() {
     const normalizedQuery = templateSearch.trim().toLowerCase()
     const sidebarCategories = (() => {
       const groups = new Map()
@@ -1605,12 +1603,468 @@ export default function App() {
 
       return list
     })()
+    return {
+      sidebarCategories,
+      availableTemplateModels,
+      availableTemplateTags,
+      filteredTemplates,
+    }
+  }
+
+  function renderTemplateBrowser() {
+    const {
+      sidebarCategories,
+      availableTemplateModels,
+      availableTemplateTags,
+      filteredTemplates,
+    } = getTemplateBrowserData()
+    return (
+      <div>
+        <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
+        <p className="text-xs text-slate-500 mt-1">
+          {serverTemplates.length > 0
+            ? templateSource === 'local-index'
+              ? `${serverTemplates.length} templates available from /templates/index.json`
+              : templateSource === 'remote'
+              ? `${serverTemplates.length} templates available from remote index`
+              : `${serverTemplates.length} templates available from server`
+            : 'No templates available from server or remote index'}
+        </p>
+        <div className="mt-3 border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] min-h-[520px]">
+            <aside className="border-r border-slate-200 p-3 bg-slate-50">
+              <p className="text-sm font-semibold text-slate-900 mb-2">Templates</p>
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTemplateCategory('all')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                    selectedTemplateCategory === 'all'
+                      ? 'bg-slate-200 text-slate-900 font-medium'
+                      : 'text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  All Templates
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTemplateCategory('popular')}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                    selectedTemplateCategory === 'popular'
+                      ? 'bg-slate-200 text-slate-900 font-medium'
+                      : 'text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  Popular
+                </button>
+              </div>
+              <div className="mt-4 space-y-3">
+                {sidebarCategories.map((group) => (
+                  <div key={group.groupName}>
+                    <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                      {group.groupName}
+                    </p>
+                    <div className="space-y-1">
+                      {group.categories.map((categoryName) => (
+                        <button
+                          key={`${group.groupName}:${categoryName}`}
+                          type="button"
+                          onClick={() => setSelectedTemplateCategory(categoryName)}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                            selectedTemplateCategory === categoryName
+                              ? 'bg-slate-200 text-slate-900 font-medium'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {categoryName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+
+            <div className="p-4 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="text"
+                  value={templateSearch}
+                  onChange={(e) => setTemplateSearch(e.target.value)}
+                  placeholder="Search templates"
+                  className="min-w-[240px] flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemplateSearch('')
+                    setTemplateModelFilter('')
+                    setTemplateTagFilter('')
+                    setTemplateSort('default')
+                  }}
+                  className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200"
+                >
+                  Clear Filters
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                <select
+                  value={templateModelFilter}
+                  onChange={(e) => setTemplateModelFilter(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                >
+                  <option value="">Model Filter</option>
+                  {availableTemplateModels.map((model) => (
+                    <option key={`model:${model}`} value={model}>{model}</option>
+                  ))}
+                </select>
+                <select
+                  value={templateTagFilter}
+                  onChange={(e) => setTemplateTagFilter(e.target.value)}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                >
+                  <option value="">Tasks</option>
+                  {availableTemplateTags.map((tag) => (
+                    <option key={`tag:${tag}`} value={tag}>{tag}</option>
+                  ))}
+                </select>
+                <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 bg-slate-50">
+                  Runs On: ComfyUI
+                </div>
+                <select
+                  value={selectedTemplateCategory === 'popular' ? 'popular' : templateSort}
+                  onChange={(e) => setTemplateSort(e.target.value)}
+                  disabled={selectedTemplateCategory === 'popular'}
+                  className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900 disabled:opacity-50"
+                >
+                  <option value="default">Default</option>
+                  <option value="popular">Popular</option>
+                  <option value="newest">Newest</option>
+                  <option value="alphabetical">Alphabetical</option>
+                </select>
+              </div>
+              <p className="text-xs text-slate-500">
+                Showing {filteredTemplates.length} of {serverTemplates.length} templates
+              </p>
+              {filteredTemplates.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">
+                  {filteredTemplates.map((template) => (
+                    <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col">
+                      {template.thumbnailUrl ? (
+                        <img
+                          src={template.thumbnailUrl}
+                          alt={template.title || template.label}
+                          className="w-full h-32 object-cover bg-slate-100"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
+                      )}
+                      <div className="p-3 flex flex-col flex-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTemplateDetails(template)}
+                          className="w-full text-left text-sm font-semibold text-slate-900 line-clamp-2 hover:underline"
+                        >
+                          {template.title || template.label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTemplateDetails(template)}
+                          className="w-full text-left text-xs text-slate-500 mt-1 line-clamp-1 hover:text-slate-700 hover:underline"
+                        >
+                          {template.description || 'No description provided'}
+                        </button>
+                        <p className="mt-2 text-[11px] text-slate-600">
+                          {(template.category || template.mediaType || 'unknown')} · In:{' '}
+                          {Array.isArray(template?.io?.inputs) && template.io.inputs.length > 0
+                            ? Array.from(new Set(template.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                            : (template.mediaType || 'unknown')}
+                          {' '}· Out:{' '}
+                          {Array.isArray(template?.io?.outputs) && template.io.outputs.length > 0
+                            ? Array.from(new Set(template.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                            : 'unknown'}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
+                          {Array.isArray(template.tags) && template.tags.length > 0 ? (
+                            <>
+                              {template.tags.slice(0, 2).map((tag) => (
+                                <span key={`${template.id}:tag:${tag}`} className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
+                                  {tag}
+                                </span>
+                              ))}
+                              {template.tags.length > 2 && (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">
+                                  +{template.tags.length - 2}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-slate-500">No tags</span>
+                          )}
+                        </div>
+                        <div className="mt-auto pt-3">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTemplateDetails(template)}
+                            className="w-full text-center text-[11px] text-slate-600 hover:text-slate-900 underline decoration-dotted"
+                          >
+                            Details
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              setSelectedPrereqTemplateId(template.id)
+                              await checkTemplateModels(template.id)
+                            }}
+                            disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
+                            className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
+                          >
+                            {modelCheckByTemplate[template.id]?.loading
+                              ? 'Checking prerequisites...'
+                              : isLoadingModelInventory
+                                ? 'Loading model inventory...'
+                                : 'Check Prerequisites'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => applyTemplate(template.id)}
+                            disabled={applyingTemplateId === template.id}
+                            className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
+                          >
+                            {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
+                          </button>
+                          {modelCheckByTemplate[template.id]?.error && (
+                            <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
+                          )}
+                          {modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
+                            <p className={`mt-2 text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                              {modelCheckByTemplate[template.id].missing.length === 0
+                                ? 'All required models available'
+                                : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  {serverTemplates.length > 0 ? 'No templates match your filters.' : 'No templates loaded yet.'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderTemplateModals() {
     const selectedPrereqTemplate = selectedPrereqTemplateId
       ? serverTemplates.find((template) => template.id === selectedPrereqTemplateId) || null
       : null
     const selectedPrereqResult = selectedPrereqTemplateId
       ? modelCheckByTemplate[selectedPrereqTemplateId]
       : null
+    return (
+      <>
+        {selectedTemplateDetails && (
+          <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-900">
+                    {selectedTemplateDetails.title || selectedTemplateDetails.label}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {selectedTemplateDetails.categoryGroup || 'Templates'} / {selectedTemplateDetails.category || 'General'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTemplateDetails(null)}
+                  className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                >
+                  Close
+                </button>
+              </div>
+
+              {selectedTemplateDetails.thumbnailUrl && (
+                <img
+                  src={selectedTemplateDetails.thumbnailUrl}
+                  alt={selectedTemplateDetails.title || selectedTemplateDetails.label}
+                  className="mt-4 w-full h-48 object-cover rounded-lg border border-slate-200 bg-slate-100"
+                />
+              )}
+
+              <div className="mt-4 space-y-3 text-sm text-slate-700">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Description</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words">
+                    {selectedTemplateDetails.description || 'No description provided'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Generation Type</p>
+                    <p className="mt-1">{selectedTemplateDetails.category || selectedTemplateDetails.mediaType || 'unknown'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Input Type</p>
+                    <p className="mt-1">
+                      {Array.isArray(selectedTemplateDetails?.io?.inputs) && selectedTemplateDetails.io.inputs.length > 0
+                        ? Array.from(new Set(selectedTemplateDetails.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                        : (selectedTemplateDetails.mediaType || 'unknown')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Output Type</p>
+                    <p className="mt-1">
+                      {Array.isArray(selectedTemplateDetails?.io?.outputs) && selectedTemplateDetails.io.outputs.length > 0
+                        ? Array.from(new Set(selectedTemplateDetails.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                        : 'unknown'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</p>
+                    <p className="mt-1">{selectedTemplateDetails.source || 'unknown'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</p>
+                    <p className="mt-1">{selectedTemplateDetails.date || 'unknown'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Usage</p>
+                    <p className="mt-1">{typeof selectedTemplateDetails.usage === 'number' ? selectedTemplateDetails.usage : 'unknown'}</p>
+                  </div>
+                </div>
+
+                {Array.isArray(selectedTemplateDetails.models) && selectedTemplateDetails.models.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Models</p>
+                    <p className="mt-1 break-words">{selectedTemplateDetails.models.join(', ')}</p>
+                  </div>
+                )}
+
+                {Array.isArray(selectedTemplateDetails.tags) && selectedTemplateDetails.tags.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tags</p>
+                    <p className="mt-1 break-words">{selectedTemplateDetails.tags.join(', ')}</p>
+                  </div>
+                )}
+
+                {Array.isArray(selectedTemplateDetails.requiresCustomNodes) && selectedTemplateDetails.requiresCustomNodes.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Required Custom Nodes</p>
+                    <p className="mt-1 break-words">{selectedTemplateDetails.requiresCustomNodes.join(', ')}</p>
+                  </div>
+                )}
+
+                {selectedTemplateDetails.tutorialUrl && (
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tutorial URL</p>
+                    <a
+                      href={selectedTemplateDetails.tutorialUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-slate-900 underline break-all"
+                    >
+                      {selectedTemplateDetails.tutorialUrl}
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedPrereqTemplate && (
+          <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-900">Prerequisites</h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {selectedPrereqTemplate.title || selectedPrereqTemplate.label}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedPrereqTemplateId(null)}
+                  className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                >
+                  Close
+                </button>
+              </div>
+
+              {!selectedPrereqResult || selectedPrereqResult.loading ? (
+                <p className="mt-4 text-sm text-slate-600">Checking prerequisites...</p>
+              ) : selectedPrereqResult.error ? (
+                <p className="mt-4 text-sm text-red-700 break-words">{selectedPrereqResult.error}</p>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  <p className={`text-sm ${selectedPrereqResult.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                    {selectedPrereqResult.missing.length === 0
+                      ? `All ${selectedPrereqResult.total} required models are available`
+                      : `${selectedPrereqResult.missing.length} missing of ${selectedPrereqResult.total} required models`}
+                  </p>
+                  {selectedPrereqResult.missing.length > 0 && (
+                    <div className="space-y-2">
+                      {selectedPrereqResult.missing.map((model) => (
+                        <div key={`modal:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-sm text-slate-700 break-all">
+                            {(model.directory || 'unknown')} / {model.name}
+                          </p>
+                          <div className="mt-2 flex gap-2">
+                            {model.url ? (
+                              <>
+                                <a
+                                  href={model.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
+                                >
+                                  Download
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!model.url) return
+                                    try {
+                                      await navigator.clipboard.writeText(model.url)
+                                      setError('Model URL copied to clipboard')
+                                    } catch (_) {
+                                      setError('Failed to copy model URL')
+                                    }
+                                  }}
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
+                                >
+                                  Copy URL
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-500">No download URL provided</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  function renderSettingsPage() {
+    const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
+    const canSaveSettings = isApiDirty
     const featureEntries = (() => {
       if (!serverFeatures || typeof serverFeatures !== 'object') return []
       const rows = []
@@ -1866,245 +2320,7 @@ export default function App() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
-                <p className="text-xs text-slate-500 mt-1">
-                  {serverTemplates.length > 0
-                    ? templateSource === 'local-index'
-                      ? `${serverTemplates.length} templates available from /templates/index.json`
-                      : templateSource === 'remote'
-                      ? `${serverTemplates.length} templates available from remote index`
-                      : `${serverTemplates.length} templates available from server`
-                    : 'No templates available from server or remote index'}
-                </p>
-                <div className="mt-3 border border-slate-200 rounded-xl bg-white overflow-hidden">
-                  <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] min-h-[520px]">
-                    <aside className="border-r border-slate-200 p-3 bg-slate-50">
-                      <p className="text-sm font-semibold text-slate-900 mb-2">Templates</p>
-                      <div className="space-y-1">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTemplateCategory('all')}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                            selectedTemplateCategory === 'all'
-                              ? 'bg-slate-200 text-slate-900 font-medium'
-                              : 'text-slate-700 hover:bg-slate-100'
-                          }`}
-                        >
-                          All Templates
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedTemplateCategory('popular')}
-                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                            selectedTemplateCategory === 'popular'
-                              ? 'bg-slate-200 text-slate-900 font-medium'
-                              : 'text-slate-700 hover:bg-slate-100'
-                          }`}
-                        >
-                          Popular
-                        </button>
-                      </div>
-                      <div className="mt-4 space-y-3">
-                        {sidebarCategories.map((group) => (
-                          <div key={group.groupName}>
-                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
-                              {group.groupName}
-                            </p>
-                            <div className="space-y-1">
-                              {group.categories.map((categoryName) => (
-                                <button
-                                  key={`${group.groupName}:${categoryName}`}
-                                  type="button"
-                                  onClick={() => setSelectedTemplateCategory(categoryName)}
-                                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
-                                    selectedTemplateCategory === categoryName
-                                      ? 'bg-slate-200 text-slate-900 font-medium'
-                                      : 'text-slate-700 hover:bg-slate-100'
-                                  }`}
-                                >
-                                  {categoryName}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </aside>
-
-                    <div className="p-4 space-y-3">
-                      <div className="flex flex-wrap gap-2">
-                        <input
-                          type="text"
-                          value={templateSearch}
-                          onChange={(e) => setTemplateSearch(e.target.value)}
-                          placeholder="Search templates"
-                          className="min-w-[240px] flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTemplateSearch('')
-                            setTemplateModelFilter('')
-                            setTemplateTagFilter('')
-                            setTemplateSort('default')
-                          }}
-                          className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200"
-                        >
-                          Clear Filters
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                        <select
-                          value={templateModelFilter}
-                          onChange={(e) => setTemplateModelFilter(e.target.value)}
-                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                        >
-                          <option value="">Model Filter</option>
-                          {availableTemplateModels.map((model) => (
-                            <option key={`model:${model}`} value={model}>{model}</option>
-                          ))}
-                        </select>
-                        <select
-                          value={templateTagFilter}
-                          onChange={(e) => setTemplateTagFilter(e.target.value)}
-                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                        >
-                          <option value="">Tasks</option>
-                          {availableTemplateTags.map((tag) => (
-                            <option key={`tag:${tag}`} value={tag}>{tag}</option>
-                          ))}
-                        </select>
-                        <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 bg-slate-50">
-                          Runs On: ComfyUI
-                        </div>
-                        <select
-                          value={selectedTemplateCategory === 'popular' ? 'popular' : templateSort}
-                          onChange={(e) => setTemplateSort(e.target.value)}
-                          disabled={selectedTemplateCategory === 'popular'}
-                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900 disabled:opacity-50"
-                        >
-                          <option value="default">Default</option>
-                          <option value="popular">Popular</option>
-                          <option value="newest">Newest</option>
-                          <option value="alphabetical">Alphabetical</option>
-                        </select>
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Showing {filteredTemplates.length} of {serverTemplates.length} templates
-                      </p>
-                      {filteredTemplates.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">
-                          {filteredTemplates.map((template) => (
-                            <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col">
-                              {template.thumbnailUrl ? (
-                                <img
-                                  src={template.thumbnailUrl}
-                                  alt={template.title || template.label}
-                                  className="w-full h-32 object-cover bg-slate-100"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
-                              )}
-                              <div className="p-3 flex flex-col flex-1">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedTemplateDetails(template)}
-                                  className="w-full text-left text-sm font-semibold text-slate-900 line-clamp-2 hover:underline"
-                                >
-                                  {template.title || template.label}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedTemplateDetails(template)}
-                                  className="w-full text-left text-xs text-slate-500 mt-1 line-clamp-1 hover:text-slate-700 hover:underline"
-                                >
-                                  {template.description || 'No description provided'}
-                                </button>
-                                <p className="mt-2 text-[11px] text-slate-600">
-                                  {(template.category || template.mediaType || 'unknown')} · In:{' '}
-                                  {Array.isArray(template?.io?.inputs) && template.io.inputs.length > 0
-                                    ? Array.from(new Set(template.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                                    : (template.mediaType || 'unknown')}
-                                  {' '}· Out:{' '}
-                                  {Array.isArray(template?.io?.outputs) && template.io.outputs.length > 0
-                                    ? Array.from(new Set(template.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                                    : 'unknown'}
-                                </p>
-                                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
-                                  {Array.isArray(template.tags) && template.tags.length > 0 ? (
-                                    <>
-                                      {template.tags.slice(0, 2).map((tag) => (
-                                        <span key={`${template.id}:tag:${tag}`} className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
-                                          {tag}
-                                        </span>
-                                      ))}
-                                      {template.tags.length > 2 && (
-                                        <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">
-                                          +{template.tags.length - 2}
-                                        </span>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <span className="text-slate-500">No tags</span>
-                                  )}
-                                </div>
-                                <div className="mt-auto pt-3">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedTemplateDetails(template)}
-                                  className="w-full text-center text-[11px] text-slate-600 hover:text-slate-900 underline decoration-dotted"
-                                >
-                                  Details
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    setSelectedPrereqTemplateId(template.id)
-                                    await checkTemplateModels(template.id)
-                                  }}
-                                  disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
-                                  className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
-                                >
-                                  {modelCheckByTemplate[template.id]?.loading
-                                    ? 'Checking prerequisites...'
-                                    : isLoadingModelInventory
-                                      ? 'Loading model inventory...'
-                                      : 'Check Prerequisites'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => applyTemplate(template.id)}
-                                  disabled={applyingTemplateId === template.id}
-                                  className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
-                                >
-                                  {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
-                                </button>
-                                {modelCheckByTemplate[template.id]?.error && (
-                                  <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
-                                )}
-                                {modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
-                                  <p className={`mt-2 text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                                    {modelCheckByTemplate[template.id].missing.length === 0
-                                      ? 'All required models available'
-                                      : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required`}
-                                  </p>
-                                )}
-                                </div>
-                              </div>
-                            </article>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-xs text-slate-500">
-                          {serverTemplates.length > 0 ? 'No templates match your filters.' : 'No templates loaded yet.'}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {renderTemplateBrowser()}
             </section>
 
             <section className="space-y-3 border-t border-slate-200 pt-6">
@@ -2275,195 +2491,6 @@ export default function App() {
               )}
             </section>
 
-            {selectedTemplateDetails && (
-              <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-semibold text-slate-900">
-                        {selectedTemplateDetails.title || selectedTemplateDetails.label}
-                      </h3>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {selectedTemplateDetails.categoryGroup || 'Templates'} / {selectedTemplateDetails.category || 'General'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedTemplateDetails(null)}
-                      className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  {selectedTemplateDetails.thumbnailUrl && (
-                    <img
-                      src={selectedTemplateDetails.thumbnailUrl}
-                      alt={selectedTemplateDetails.title || selectedTemplateDetails.label}
-                      className="mt-4 w-full h-48 object-cover rounded-lg border border-slate-200 bg-slate-100"
-                    />
-                  )}
-
-                  <div className="mt-4 space-y-3 text-sm text-slate-700">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Description</p>
-                      <p className="mt-1 whitespace-pre-wrap break-words">
-                        {selectedTemplateDetails.description || 'No description provided'}
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Generation Type</p>
-                        <p className="mt-1">{selectedTemplateDetails.category || selectedTemplateDetails.mediaType || 'unknown'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Input Type</p>
-                        <p className="mt-1">
-                          {Array.isArray(selectedTemplateDetails?.io?.inputs) && selectedTemplateDetails.io.inputs.length > 0
-                            ? Array.from(new Set(selectedTemplateDetails.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                            : (selectedTemplateDetails.mediaType || 'unknown')}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Output Type</p>
-                        <p className="mt-1">
-                          {Array.isArray(selectedTemplateDetails?.io?.outputs) && selectedTemplateDetails.io.outputs.length > 0
-                            ? Array.from(new Set(selectedTemplateDetails.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
-                            : 'unknown'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</p>
-                        <p className="mt-1">{selectedTemplateDetails.source || 'unknown'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</p>
-                        <p className="mt-1">{selectedTemplateDetails.date || 'unknown'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Usage</p>
-                        <p className="mt-1">{typeof selectedTemplateDetails.usage === 'number' ? selectedTemplateDetails.usage : 'unknown'}</p>
-                      </div>
-                    </div>
-
-                    {Array.isArray(selectedTemplateDetails.models) && selectedTemplateDetails.models.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Models</p>
-                        <p className="mt-1 break-words">{selectedTemplateDetails.models.join(', ')}</p>
-                      </div>
-                    )}
-
-                    {Array.isArray(selectedTemplateDetails.tags) && selectedTemplateDetails.tags.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tags</p>
-                        <p className="mt-1 break-words">{selectedTemplateDetails.tags.join(', ')}</p>
-                      </div>
-                    )}
-
-                    {Array.isArray(selectedTemplateDetails.requiresCustomNodes) && selectedTemplateDetails.requiresCustomNodes.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Required Custom Nodes</p>
-                        <p className="mt-1 break-words">{selectedTemplateDetails.requiresCustomNodes.join(', ')}</p>
-                      </div>
-                    )}
-
-                    {selectedTemplateDetails.tutorialUrl && (
-                      <div>
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tutorial URL</p>
-                        <a
-                          href={selectedTemplateDetails.tutorialUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-1 inline-block text-slate-900 underline break-all"
-                        >
-                          {selectedTemplateDetails.tutorialUrl}
-                        </a>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {selectedPrereqTemplate && (
-              <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-                <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-semibold text-slate-900">Prerequisites</h3>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {selectedPrereqTemplate.title || selectedPrereqTemplate.label}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPrereqTemplateId(null)}
-                      className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  {!selectedPrereqResult || selectedPrereqResult.loading ? (
-                    <p className="mt-4 text-sm text-slate-600">Checking prerequisites...</p>
-                  ) : selectedPrereqResult.error ? (
-                    <p className="mt-4 text-sm text-red-700 break-words">{selectedPrereqResult.error}</p>
-                  ) : (
-                    <div className="mt-4 space-y-3">
-                      <p className={`text-sm ${selectedPrereqResult.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                        {selectedPrereqResult.missing.length === 0
-                          ? `All ${selectedPrereqResult.total} required models are available`
-                          : `${selectedPrereqResult.missing.length} missing of ${selectedPrereqResult.total} required models`}
-                      </p>
-                      {selectedPrereqResult.missing.length > 0 && (
-                        <div className="space-y-2">
-                          {selectedPrereqResult.missing.map((model) => (
-                            <div key={`modal:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-3">
-                              <p className="text-sm text-slate-700 break-all">
-                                {(model.directory || 'unknown')} / {model.name}
-                              </p>
-                              <div className="mt-2 flex gap-2">
-                                {model.url ? (
-                                  <>
-                                    <a
-                                      href={model.url}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
-                                    >
-                                      Download
-                                    </a>
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        if (!model.url) return
-                                        try {
-                                          await navigator.clipboard.writeText(model.url)
-                                          setError('Model URL copied to clipboard')
-                                        } catch (_) {
-                                          setError('Failed to copy model URL')
-                                        }
-                                      }}
-                                      className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
-                                    >
-                                      Copy URL
-                                    </button>
-                                  </>
-                                ) : (
-                                  <span className="text-xs text-slate-500">No download URL provided</span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
           </div>
         </div>
       </div>
@@ -2473,22 +2500,6 @@ export default function App() {
   function renderOnboardingPage() {
     const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
     const canGoToWorkflowStep = hasConfiguredApiUrl
-    const normalizedQuery = templateSearch.trim().toLowerCase()
-    const filteredTemplates = normalizedQuery
-      ? serverTemplates.filter((template) => {
-        const haystack = [
-          template.title,
-          template.label,
-          template.description,
-          ...(Array.isArray(template.tags) ? template.tags : []),
-          template.mediaType,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(normalizedQuery)
-      })
-      : serverTemplates
 
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -2680,47 +2691,7 @@ export default function App() {
                   )}
                 </div>
               )}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
-                  <input
-                    type="text"
-                    value={templateSearch}
-                    onChange={(e) => setTemplateSearch(e.target.value)}
-                    placeholder="Search templates by name, tag, or description"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                  />
-                  {filteredTemplates.length > 0 ? (
-                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[28rem] overflow-y-auto pr-1">
-                      {filteredTemplates.map((template) => (
-                        <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-                          {template.thumbnailUrl ? (
-                            <img
-                              src={template.thumbnailUrl}
-                              alt={template.title || template.label}
-                              className="w-full h-24 object-cover bg-slate-100"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="w-full h-24 bg-slate-100 border-b border-slate-200" />
-                          )}
-                          <div className="p-3">
-                            <p className="text-sm font-semibold text-slate-900 line-clamp-2">{template.title || template.label}</p>
-                            <button
-                              type="button"
-                              onClick={() => applyTemplate(template.id)}
-                              disabled={applyingTemplateId === template.id}
-                              className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
-                            >
-                              {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
-                            </button>
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-xs text-slate-500">No templates loaded yet.</p>
-                  )}
-                </div>
+                {renderTemplateBrowser()}
                 <div className="flex justify-between gap-2">
                   <button
                     type="button"
@@ -2754,6 +2725,7 @@ export default function App() {
         <Route path="/settings" element={renderSettingsPage()} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      {renderTemplateModals()}
       {toast && (
         <div className="fixed right-4 bottom-4 z-[80]">
           <div className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium ${
