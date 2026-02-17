@@ -16,6 +16,7 @@ export default function HomePage({
   canCloseSettings,
   openOnboardingPage,
   promptInputMode,
+  supportsInputImage,
   handleInputImageChange,
   inputImageName,
   clearInputImage,
@@ -83,6 +84,7 @@ export default function HomePage({
           canCloseSettings={canCloseSettings}
           openOnboardingPage={openOnboardingPage}
           promptInputMode={promptInputMode}
+          supportsInputImage={supportsInputImage}
           handleInputImageChange={handleInputImageChange}
           inputImageName={inputImageName}
           clearInputImage={clearInputImage}

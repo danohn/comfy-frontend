@@ -16,7 +16,7 @@ import SettingsPage from './features/settings/SettingsPage'
 import HomePage from './features/home/HomePage'
 import { getTemplateBrowserData } from './features/templates/templateBrowserData'
 import { normalizeBaseUrl } from './lib/apiUrl'
-import { analyzeWorkflowPromptInputs } from './lib/workflowPrompt'
+import { analyzeWorkflowPromptInputs, workflowSupportsInputImage } from './lib/workflowPrompt'
 
 export default function App() {
   const navigate = useNavigate()
@@ -27,6 +27,7 @@ export default function App() {
   const [promptText, setPromptText] = useState('')
   const [negativePromptText, setNegativePromptText] = useState('')
   const [promptInputMode, setPromptInputMode] = useState('single')
+  const [supportsInputImage, setSupportsInputImage] = useState(false)
   const [workflowHealth, setWorkflowHealth] = useState(null)
   const [isCheckingWorkflowHealth, setIsCheckingWorkflowHealth] = useState(false)
   const [inputImageFile, setInputImageFile] = useState(null)
@@ -183,6 +184,12 @@ export default function App() {
     setPromptInputMode(promptInfo.mode)
     setPromptText(promptInfo.defaultPrompt)
     setNegativePromptText(promptInfo.defaultNegativePrompt)
+    const supportsImage = workflowSupportsInputImage(workflow)
+    setSupportsInputImage(supportsImage)
+    if (!supportsImage) {
+      setInputImageFile(null)
+      setInputImageName('')
+    }
   }, [workflow])
 
   useEffect(() => {
@@ -370,7 +377,7 @@ export default function App() {
 
   function renderHomePage() {
     return (
-      <HomePage
+        <HomePage
         openSettingsPage={openSettingsPage}
         imageSrc={imageSrc}
         isLoading={isLoading}
@@ -383,8 +390,9 @@ export default function App() {
         queueState={queueState}
         canCloseSettings={canCloseSettings}
         openOnboardingPage={openOnboardingPage}
-        promptInputMode={promptInputMode}
-        handleInputImageChange={handleInputImageChange}
+          promptInputMode={promptInputMode}
+          supportsInputImage={supportsInputImage}
+          handleInputImageChange={handleInputImageChange}
         inputImageName={inputImageName}
         clearInputImage={clearInputImage}
         promptText={promptText}

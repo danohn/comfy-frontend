@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { analyzeWorkflowPromptInputs, extractPromptFromGraph } from './workflowPrompt'
+import { analyzeWorkflowPromptInputs, extractPromptFromGraph, workflowSupportsInputImage } from './workflowPrompt'
 
 describe('workflowPrompt helpers', () => {
   it('extracts dual prompt mode from ksampler wiring', () => {
@@ -35,5 +35,20 @@ describe('workflowPrompt helpers', () => {
     }
 
     expect(extractPromptFromGraph(graph)).toBe('hello world')
+  })
+
+  it('detects workflow support for image input via LoadImage', () => {
+    const graph = {
+      '1': { class_type: 'LoadImage', inputs: { image: 'foo.png' } },
+      '2': { class_type: 'KSampler', inputs: {} },
+    }
+    expect(workflowSupportsInputImage(graph)).toBe(true)
+  })
+
+  it('returns false when workflow has no LoadImage input node', () => {
+    const graph = {
+      '1': { class_type: 'CLIPTextEncode', inputs: { text: 'prompt' } },
+    }
+    expect(workflowSupportsInputImage(graph)).toBe(false)
   })
 })

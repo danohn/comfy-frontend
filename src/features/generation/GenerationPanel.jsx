@@ -13,6 +13,7 @@ export default function GenerationPanel({
   canCloseSettings,
   openOnboardingPage,
   promptInputMode,
+  supportsInputImage,
   handleInputImageChange,
   inputImageName,
   clearInputImage,
@@ -93,24 +94,26 @@ export default function GenerationPanel({
             <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Prompt</label>
           )}
           <div className="relative">
-            <div className="absolute left-4 top-4 z-10">
-              <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 text-xs rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
-                Add input image
-                <input type="file" accept="image/*" onChange={handleInputImageChange} className="hidden" />
-              </label>
-            </div>
-            {inputImageName && (
-              <div className="absolute left-4 top-12 z-10 flex items-center gap-2 text-xs">
-                <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 max-w-60 truncate" title={inputImageName}>
-                  {inputImageName}
-                </span>
-                <button
-                  type="button"
-                  onClick={clearInputImage}
-                  className="px-2 py-1 rounded bg-slate-200 text-slate-700 hover:bg-slate-300"
-                >
-                  Remove
-                </button>
+            {supportsInputImage && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
+                  Add input image
+                  <input type="file" accept="image/*" onChange={handleInputImageChange} className="hidden" />
+                </label>
+                {inputImageName && (
+                  <>
+                    <span className="px-2 py-1 rounded bg-slate-100 text-slate-700 max-w-60 truncate" title={inputImageName}>
+                      {inputImageName}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearInputImage}
+                      className="px-2 py-1 rounded bg-slate-200 text-slate-700 hover:bg-slate-300"
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <textarea
@@ -123,7 +126,7 @@ export default function GenerationPanel({
                 }
               }}
               placeholder={promptInputMode === 'dual' ? 'Positive prompt' : 'What would you like to generate?'}
-              className={`w-full px-6 py-4 pt-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none ${promptInputMode === 'dual' ? 'text-sm' : 'text-lg'}`}
+              className={`w-full px-6 pt-4 pb-20 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none ${promptInputMode === 'dual' ? 'text-sm' : 'text-lg'}`}
               rows="3"
               disabled={isLoading}
             />

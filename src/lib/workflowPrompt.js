@@ -65,6 +65,17 @@ export function analyzeWorkflowPromptInputs(graph) {
   return { mode: 'single', defaultPrompt: positiveNode.text || '', defaultNegativePrompt: '' }
 }
 
+export function workflowSupportsInputImage(graph) {
+  if (!graph || typeof graph !== 'object') return false
+  for (const node of Object.values(graph)) {
+    if (!node || typeof node !== 'object') continue
+    const classType = String(node?.class_type || '').toLowerCase()
+    if (classType !== 'loadimage') continue
+    if (typeof node?.inputs?.image === 'string') return true
+  }
+  return false
+}
+
 export function extractPromptFromGraph(graph) {
   if (!graph || typeof graph !== 'object') return ''
   for (const node of Object.values(graph)) {
