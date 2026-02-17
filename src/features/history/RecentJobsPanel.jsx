@@ -1,8 +1,11 @@
-import React from 'react'
+import React, { useMemo, useState } from 'react'
 
 export default function RecentJobsPanel({
   fetchRecentHistory,
+  loadMoreRecentJobs,
   isLoadingRecentJobs,
+  isLoadingMoreRecentJobs,
+  hasMoreRecentJobs,
   recentJobsError,
   serverRecentJobs,
   selectedJobId,
@@ -15,10 +18,31 @@ export default function RecentJobsPanel({
   jobDetailError,
   jobDetail,
 }) {
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const filteredJobs = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase()
+    const matchesFilter = (status) => {
+      const normalized = String(status || '').toLowerCase()
+      if (statusFilter === 'all') return true
+      if (statusFilter === 'success') return normalized === 'success' || normalized === 'completed'
+      if (statusFilter === 'failed') return normalized === 'failed' || normalized === 'error'
+      if (statusFilter === 'running') return normalized === 'running' || normalized === 'in_progress'
+      return normalized === statusFilter
+    }
+
+    return serverRecentJobs.filter((job) => {
+      if (!matchesFilter(job.status)) return false
+      if (!query) return true
+      const haystack = `${job.title || ''} ${job.prompt || ''}`.toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [searchQuery, serverRecentJobs, statusFilter])
+
   return (
-    <div className="w-full max-w-2xl mt-8">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold text-slate-900">Recent Jobs</h3>
+    <div className="w-full">
+      <div className="flex items-center justify-end mb-3">
         <button
           type="button"
           onClick={fetchRecentHistory}
@@ -42,12 +66,40 @@ export default function RecentJobsPanel({
         </div>
       ) : (
         <div className="space-y-2">
-          {serverRecentJobs.map((job) => (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search jobs..."
+              className="flex-1 min-w-52 px-2 py-1.5 text-xs border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-2 py-1.5 text-xs border border-slate-300 rounded-md bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-400"
+            >
+              <option value="all">All statuses</option>
+              <option value="success">Success</option>
+              <option value="failed">Failed</option>
+              <option value="running">Running</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <span className="text-[11px] text-slate-500">{filteredJobs.length} shown</span>
+          </div>
+          {filteredJobs.length === 0 && (
+            <div className="border border-slate-200 rounded-lg p-3 bg-slate-50 text-sm text-slate-500">
+              No jobs match the current filters.
+            </div>
+          )}
+          {filteredJobs.map((job) => (
             <div key={job.id} className="border border-slate-200 rounded-lg p-3 bg-white">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-slate-900 break-words">{job.title || `Job ${String(job.id).slice(0, 8)}`}</p>
-                  <p className="text-xs text-slate-500 mt-0.5 break-words">{job.prompt || 'Prompt unavailable'}</p>
+                  <p className="text-xs text-slate-500 mt-0.5 break-words">
+                    {job.prompt ? (job.prompt.length > 160 ? `${job.prompt.slice(0, 160)}...` : job.prompt) : 'Prompt unavailable'}
+                  </p>
                   <p className="text-xs text-slate-500 mt-1">{new Date(job.createdAt).toLocaleString()}</p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -145,6 +197,18 @@ export default function RecentJobsPanel({
               )}
             </div>
           ))}
+          {hasMoreRecentJobs && (
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={loadMoreRecentJobs}
+                disabled={isLoadingMoreRecentJobs}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isLoadingMoreRecentJobs ? 'Loading more...' : 'Load more'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

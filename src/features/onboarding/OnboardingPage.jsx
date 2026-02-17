@@ -32,36 +32,35 @@ export default function OnboardingPage({
   const canGoToWorkflowStep = hasConfiguredApiUrl
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="max-w-4xl mx-auto px-6 py-10">
-        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-semibold">Getting Started</h1>
-              <p className="text-sm text-slate-600 mt-1">Step {onboardingStep} of 2</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setOnboardingStep(1)}
-                disabled={onboardingStep === 1}
-                className="px-3 py-2 text-sm rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                ←
-              </button>
-              <button
-                type="button"
-                onClick={() => setOnboardingStep(2)}
-                disabled={!canGoToWorkflowStep || onboardingStep === 2}
-                className="px-3 py-2 text-sm rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                →
-              </button>
-            </div>
+    <div className="min-h-screen bg-white text-slate-900">
+      <div className="max-w-5xl mx-auto px-6 py-8 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold">Getting Started</h1>
+            <p className="text-sm text-slate-600 mt-1">Step {onboardingStep} of 2</p>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOnboardingStep(1)}
+              disabled={onboardingStep === 1}
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              ← Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => setOnboardingStep(2)}
+              disabled={!canGoToWorkflowStep || onboardingStep === 2}
+              className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
 
-          {onboardingStep === 1 ? (
-            <section className="space-y-4">
+        {onboardingStep === 1 ? (
+          <section className="space-y-4 bg-white border border-slate-200 rounded-xl p-6">
               <h2 className="text-xl font-semibold">Connect to ComfyUI</h2>
               <div className="space-y-2">
                 <label className="block text-xs font-semibold text-slate-700">Host or IP</label>
@@ -138,9 +137,9 @@ export default function OnboardingPage({
               {isApiDirty && (
                 <p className="text-xs text-slate-500">You have unsaved API changes.</p>
               )}
-            </section>
-          ) : (
-            <section className="space-y-4">
+          </section>
+        ) : (
+          <section className="space-y-4 bg-white border border-slate-200 rounded-xl p-6">
               <h2 className="text-xl font-semibold">Choose Workflow</h2>
               <p className="text-sm text-slate-600">{hasConfiguredWorkflow ? `Selected: ${workflowName}` : 'No workflow selected yet'}</p>
               <div className="flex gap-2">
@@ -231,9 +230,8 @@ export default function OnboardingPage({
                   Finish Setup
                 </button>
               </div>
-            </section>
-          )}
-        </div>
+          </section>
+        )}
       </div>
     </div>
   )

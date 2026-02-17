@@ -47,6 +47,7 @@ export default function SettingsPage({
   handleFreeMemory,
   opsActionStatus,
   onBackToApp,
+  onOpenJobs,
 }) {
   const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
   const canSaveSettings = isApiDirty
@@ -54,30 +55,39 @@ export default function SettingsPage({
   const featureEntries = flattenFeatureEntries(serverFeatures)
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="max-w-4xl mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-6">
+    <div className="min-h-screen bg-white text-slate-900">
+      <div className="max-w-5xl mx-auto px-6 py-8">
+        <div className="flex items-center justify-between gap-3 mb-4">
           <div>
             <h1 className="text-3xl font-bold">Settings</h1>
             <p className="text-sm text-slate-600 mt-1">Configure your server, workflow, models, and operations.</p>
           </div>
-          <button
-            type="button"
-            onClick={onBackToApp}
-            className="px-4 py-2 bg-slate-100 text-slate-800 rounded-lg hover:bg-slate-200"
-          >
-            Back to App
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onOpenJobs}
+              className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+            >
+              Jobs
+            </button>
+            <button
+              type="button"
+              onClick={onBackToApp}
+              className="px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+            >
+              Back to App
+            </button>
+          </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+        <div className="space-y-4">
           {!canCloseSettings && (
             <p className="text-sm text-slate-600 bg-amber-50 border border-amber-200 rounded-lg p-3">
               Complete setup to continue: add your API URL and workflow JSON.
             </p>
           )}
 
-          <section className="space-y-3">
+          <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-6">
             <h2 className="text-xl font-semibold">ComfyUI API</h2>
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-slate-700">Host or IP</label>
@@ -159,7 +169,7 @@ export default function SettingsPage({
             )}
           </section>
 
-          <section className="space-y-3 border-t border-slate-200 pt-6">
+          <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-6">
             <h2 className="text-xl font-semibold">Workflow</h2>
             <p className="text-sm text-slate-600">{hasConfiguredWorkflow ? `Selected: ${workflowName}` : 'No workflow selected yet'}</p>
             <div className="flex gap-2">
@@ -236,7 +246,7 @@ export default function SettingsPage({
             {renderTemplateBrowser()}
           </section>
 
-          <section className="space-y-3 border-t border-slate-200 pt-6">
+          <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-6">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-xl font-semibold">Server Dashboard</h2>
               <button
@@ -338,7 +348,7 @@ export default function SettingsPage({
             )}
           </section>
 
-          <section className="space-y-3 border-t border-slate-200 pt-6">
+          <section className="space-y-3 bg-white border border-slate-200 rounded-xl p-6">
             <h2 className="text-3xl font-semibold text-slate-900">Danger Zone</h2>
             <div className="rounded-xl border border-red-200 overflow-hidden bg-white">
               <div className="p-5 flex items-start justify-between gap-6 border-b border-slate-200">

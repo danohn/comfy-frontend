@@ -2,9 +2,13 @@ import { useCallback, useRef, useState } from 'react'
 import { normalizeBaseUrl } from '../lib/apiUrl'
 import { extractPromptFromGraph } from '../lib/workflowPrompt'
 
+const JOBS_PAGE_SIZE = 20
+
 export default function useRecentJobs(apiUrl) {
   const [serverRecentJobs, setServerRecentJobs] = useState([])
   const [isLoadingRecentJobs, setIsLoadingRecentJobs] = useState(false)
+  const [isLoadingMoreRecentJobs, setIsLoadingMoreRecentJobs] = useState(false)
+  const [hasMoreRecentJobs, setHasMoreRecentJobs] = useState(false)
   const [recentJobsError, setRecentJobsError] = useState(null)
   const [selectedJobId, setSelectedJobId] = useState(null)
   const [jobDetail, setJobDetail] = useState(null)
@@ -73,7 +77,7 @@ export default function useRecentJobs(apiUrl) {
 
     return entries
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 20)
+      .slice(0, JOBS_PAGE_SIZE)
   }, [extractImageFromOutputObject])
 
   const parseApiJobsEntries = useCallback((jobsArray) => {
@@ -101,7 +105,6 @@ export default function useRecentJobs(apiUrl) {
           source: 'api-jobs',
         }
       })
-      .slice(0, 20)
   }, [extractImageFromOutputObject])
 
   const hydrateRecentJobPrompts = useCallback(async (baseUrl, jobs) => {
@@ -133,22 +136,45 @@ export default function useRecentJobs(apiUrl) {
     )
   }, [])
 
-  const fetchRecentHistory = useCallback(async () => {
+  const fetchRecentHistory = useCallback(async ({ append = false } = {}) => {
     if (!apiUrl) return
 
-    setIsLoadingRecentJobs(true)
-    setRecentJobsError(null)
+    if (append) {
+      setIsLoadingMoreRecentJobs(true)
+    } else {
+      setIsLoadingRecentJobs(true)
+      setRecentJobsError(null)
+    }
     try {
       const baseUrl = normalizeBaseUrl(apiUrl)
-      const jobsRes = await fetch(`${baseUrl}/api/jobs?limit=20&offset=0&sort_by=created_at&sort_order=desc`)
+      const offset = append ? serverRecentJobs.length : 0
+      const jobsRes = await fetch(`${baseUrl}/api/jobs?limit=${JOBS_PAGE_SIZE}&offset=${offset}&sort_by=created_at&sort_order=desc`)
       if (jobsRes.ok) {
         const jobsData = await jobsRes.json()
         const parsedJobs = parseApiJobsEntries(jobsData?.jobs)
-        if (parsedJobs.length > 0) {
-          setServerRecentJobs(parsedJobs)
+        if (parsedJobs.length > 0 || append) {
+          setServerRecentJobs((current) => {
+            if (!append) return parsedJobs
+            const merged = [...current]
+            for (const entry of parsedJobs) {
+              if (!merged.some((existing) => existing.id === entry.id)) {
+                merged.push(entry)
+              }
+            }
+            return merged
+          })
+          const hasMore = typeof jobsData?.pagination?.has_more === 'boolean'
+            ? jobsData.pagination.has_more
+            : parsedJobs.length === JOBS_PAGE_SIZE
+          setHasMoreRecentJobs(hasMore)
           hydrateRecentJobPrompts(baseUrl, parsedJobs)
           return
         }
+      }
+
+      if (append) {
+        setHasMoreRecentJobs(false)
+        return
       }
 
       const res = await fetch(`${baseUrl}/history`)
@@ -157,12 +183,23 @@ export default function useRecentJobs(apiUrl) {
       }
       const historyData = await res.json()
       setServerRecentJobs(parseHistoryEntries(historyData))
+      setHasMoreRecentJobs(false)
     } catch (err) {
       setRecentJobsError(String(err))
+      setHasMoreRecentJobs(false)
     } finally {
-      setIsLoadingRecentJobs(false)
+      if (append) {
+        setIsLoadingMoreRecentJobs(false)
+      } else {
+        setIsLoadingRecentJobs(false)
+      }
     }
-  }, [apiUrl, hydrateRecentJobPrompts, parseApiJobsEntries, parseHistoryEntries])
+  }, [apiUrl, hydrateRecentJobPrompts, parseApiJobsEntries, parseHistoryEntries, serverRecentJobs.length])
+
+  const loadMoreRecentJobs = useCallback(async () => {
+    if (!hasMoreRecentJobs || isLoadingRecentJobs || isLoadingMoreRecentJobs) return
+    await fetchRecentHistory({ append: true })
+  }, [fetchRecentHistory, hasMoreRecentJobs, isLoadingMoreRecentJobs, isLoadingRecentJobs])
 
   const fetchJobDetail = useCallback(async (jobId) => {
     if (!apiUrl || !jobId) return
@@ -221,6 +258,8 @@ export default function useRecentJobs(apiUrl) {
   return {
     serverRecentJobs,
     isLoadingRecentJobs,
+    isLoadingMoreRecentJobs,
+    hasMoreRecentJobs,
     recentJobsError,
     selectedJobId,
     setSelectedJobId,
@@ -230,6 +269,7 @@ export default function useRecentJobs(apiUrl) {
     jobDetailError,
     setJobDetailError,
     fetchRecentHistory,
+    loadMoreRecentJobs,
     fetchJobDetail,
   }
 }

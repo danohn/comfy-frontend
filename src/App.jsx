@@ -14,6 +14,7 @@ import TemplateModals from './features/templates/TemplateModals'
 import OnboardingPage from './features/onboarding/OnboardingPage'
 import SettingsPage from './features/settings/SettingsPage'
 import HomePage from './features/home/HomePage'
+import JobsPage from './features/history/JobsPage'
 import { getTemplateBrowserData } from './features/templates/templateBrowserData'
 import { normalizeBaseUrl } from './lib/apiUrl'
 import { analyzeWorkflowPromptInputs, workflowSupportsInputImage } from './lib/workflowPrompt'
@@ -120,6 +121,8 @@ export default function App() {
   const {
     serverRecentJobs,
     isLoadingRecentJobs,
+    isLoadingMoreRecentJobs,
+    hasMoreRecentJobs,
     recentJobsError,
     selectedJobId,
     setSelectedJobId,
@@ -129,6 +132,7 @@ export default function App() {
     jobDetailError,
     setJobDetailError,
     fetchRecentHistory,
+    loadMoreRecentJobs,
     fetchJobDetail,
   } = useRecentJobs(apiUrl)
   const {
@@ -389,6 +393,7 @@ export default function App() {
     return (
         <HomePage
         openSettingsPage={openSettingsPage}
+        openJobsPage={() => navigate('/jobs')}
         imageSrc={imageSrc}
         isLoading={isLoading}
         statusMessage={statusMessage}
@@ -412,8 +417,22 @@ export default function App() {
         negativePromptText={negativePromptText}
         setNegativePromptText={setNegativePromptText}
         apiUrl={apiUrl}
+        showWelcome={showWelcome}
+        handleStartOnboarding={handleStartOnboarding}
+      />
+    )
+  }
+
+  function renderJobsPage() {
+    return (
+      <JobsPage
+        onBackHome={() => navigate('/')}
+        onOpenSettings={openSettingsPage}
         fetchRecentHistory={fetchRecentHistory}
+        loadMoreRecentJobs={loadMoreRecentJobs}
         isLoadingRecentJobs={isLoadingRecentJobs}
+        isLoadingMoreRecentJobs={isLoadingMoreRecentJobs}
+        hasMoreRecentJobs={hasMoreRecentJobs}
         recentJobsError={recentJobsError}
         serverRecentJobs={serverRecentJobs}
         selectedJobId={selectedJobId}
@@ -421,12 +440,13 @@ export default function App() {
         setJobDetail={setJobDetail}
         setJobDetailError={setJobDetailError}
         fetchJobDetail={fetchJobDetail}
-        showHistoryImage={showHistoryImage}
+        showHistoryImage={(url) => {
+          showHistoryImage(url)
+          navigate('/')
+        }}
         isLoadingJobDetail={isLoadingJobDetail}
         jobDetailError={jobDetailError}
         jobDetail={jobDetail}
-        showWelcome={showWelcome}
-        handleStartOnboarding={handleStartOnboarding}
       />
     )
   }
@@ -541,6 +561,7 @@ export default function App() {
         handleFreeMemory={handleFreeMemory}
         opsActionStatus={opsActionStatus}
         onBackToApp={() => navigate('/')}
+        onOpenJobs={() => navigate('/jobs')}
       />
     )
   }
@@ -581,6 +602,7 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={renderHomePage()} />
+        <Route path="/jobs" element={renderJobsPage()} />
         <Route path="/onboarding" element={renderOnboardingPage()} />
         <Route path="/settings" element={renderSettingsPage()} />
         <Route path="*" element={<Navigate to="/" replace />} />

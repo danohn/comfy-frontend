@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 export default function GenerationPanel({
   imageSrc,
@@ -25,6 +25,21 @@ export default function GenerationPanel({
   setNegativePromptText,
   apiUrl,
 }) {
+  const [showStatusDetails, setShowStatusDetails] = useState(false)
+  const [isPromptFieldFocused, setIsPromptFieldFocused] = useState(false)
+  const hasQueueSnapshot = typeof queueState.running === 'number' && typeof queueState.pending === 'number'
+  const isServerReachable = hasConfiguredApiUrl && hasQueueSnapshot && !queueState?.error
+  const reachabilityState = !hasConfiguredApiUrl
+    ? 'not-configured'
+    : isServerReachable
+      ? 'online'
+      : hasQueueSnapshot || queueState?.error
+        ? 'offline'
+        : 'unknown'
+  const isReady = hasConfiguredWorkflow && isServerReachable
+  const statusLabel = isReady ? 'Ready' : 'Action Required'
+  const statusDotClass = isReady ? 'bg-green-500' : 'bg-red-500'
+
   return (
     <>
       <div className={`w-full max-w-2xl flex flex-col ${imageSrc ? 'items-start' : 'items-center justify-center'}`}>
@@ -65,21 +80,66 @@ export default function GenerationPanel({
         )}
 
         <form onSubmit={handleGenerate} className="w-full">
-          <div className="w-full mb-4 p-3 border border-slate-200 rounded-lg bg-slate-50 flex items-center justify-between gap-4">
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className={`px-2 py-1 rounded-full font-medium ${hasConfiguredApiUrl ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                API: {hasConfiguredApiUrl ? 'Configured' : 'Missing'}
-              </span>
-              <span className={`px-2 py-1 rounded-full font-medium ${hasConfiguredWorkflow ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                Workflow: {hasConfiguredWorkflow ? workflowName : 'Missing'}
-              </span>
-              {typeof queueState.running === 'number' && typeof queueState.pending === 'number' && (
-                <span className="px-2 py-1 rounded-full font-medium bg-slate-200 text-slate-700">
-                  Queue: {queueState.running} running, {queueState.pending} pending
-                </span>
-              )}
-            </div>
-            {!canCloseSettings && (
+          <div className="w-full mb-3">
+            <button
+              type="button"
+              onClick={() => setShowStatusDetails((current) => !current)}
+              className="w-full p-3 border border-slate-200 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2.5 h-2.5 rounded-full ${statusDotClass}`} aria-hidden="true" />
+                  <p className="text-sm font-semibold text-slate-800">
+                    Status: {statusLabel}
+                  </p>
+                </div>
+                <p className="text-xs text-slate-500">{showStatusDetails ? 'Hide details' : 'Show details'}</p>
+              </div>
+            </button>
+            {showStatusDetails && (
+              <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600 space-y-1">
+                <p>
+                  Connection: <span className={`font-medium ${hasConfiguredApiUrl ? 'text-green-700' : 'text-red-700'}`}>{hasConfiguredApiUrl ? 'Saved' : 'Missing'}</span>
+                </p>
+                <p>
+                  Server reachability:{' '}
+                  <span className={`font-medium ${
+                    reachabilityState === 'online'
+                      ? 'text-green-700'
+                      : reachabilityState === 'offline'
+                        ? 'text-red-700'
+                        : 'text-slate-700'
+                  }`}>
+                    {reachabilityState === 'online'
+                      ? 'Online'
+                      : reachabilityState === 'offline'
+                        ? 'Offline'
+                      : reachabilityState === 'not-configured'
+                          ? 'Not configured'
+                          : 'Unknown'}
+                  </span>
+                  {hasConfiguredApiUrl && (
+                    <>
+                      {' '}· <span className="font-mono text-slate-700 break-all">{apiUrl}</span>
+                    </>
+                  )}
+                </p>
+                <p>
+                  Workflow: <span className={`font-medium ${hasConfiguredWorkflow ? 'text-green-700' : 'text-red-700'}`}>{hasConfiguredWorkflow ? (workflowName || 'Configured') : 'Missing'}</span>
+                </p>
+                <p>
+                  Queue: <span className="font-medium text-slate-700">{typeof queueState.running === 'number' ? queueState.running : '?'} running, {typeof queueState.pending === 'number' ? queueState.pending : '?'} pending</span>
+                </p>
+                {queueState?.error && (
+                  <p>
+                    Queue health: <span className="font-medium text-red-700">{queueState.error}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          {!canCloseSettings && (
+            <div className="mb-3 flex justify-end">
               <button
                 type="button"
                 onClick={openOnboardingPage}
@@ -87,15 +147,11 @@ export default function GenerationPanel({
               >
                 Complete Setup
               </button>
-            )}
-          </div>
-
-          {promptInputMode === 'dual' && (
-            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Prompt</label>
+            </div>
           )}
-          <div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
             {supportsInputImage && (
-              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
                 <label className="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 rounded-md font-medium cursor-pointer hover:bg-slate-200 transition-colors">
                   Add input image
                   <input type="file" accept="image/*" onChange={handleInputImageChange} className="hidden" />
@@ -116,9 +172,14 @@ export default function GenerationPanel({
                 )}
               </div>
             )}
+            {promptInputMode === 'dual' && (
+              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Prompt</label>
+            )}
             <textarea
               value={promptText}
               onChange={(e) => setPromptText(e.target.value)}
+              onFocus={() => setIsPromptFieldFocused(true)}
+              onBlur={() => setIsPromptFieldFocused(false)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault()
@@ -130,55 +191,55 @@ export default function GenerationPanel({
               rows="2"
               disabled={isLoading}
             />
-          </div>
-          {promptInputMode === 'dual' && (
-            <div className="mt-3">
-              <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Negative Prompt</label>
-              <textarea
-                value={negativePromptText}
-                onChange={(e) => setNegativePromptText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleGenerate(e)
-                  }
-                }}
-                placeholder="Negative prompt"
-                className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-sm"
-                rows="2"
-                disabled={isLoading}
-              />
-            </div>
-          )}
-          <div className="mt-3 flex justify-end gap-2">
-            {isLoading && (
-              <button
-                type="button"
-                onClick={handleCancelRun}
-                className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 rounded-md hover:bg-red-200 transition-colors"
-                title={currentPromptId ? `Cancel ${currentPromptId}` : 'Cancel current run'}
-              >
-                Cancel
-              </button>
+            {promptInputMode === 'dual' && (
+              <div className="mt-3">
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Negative Prompt</label>
+                <textarea
+                  value={negativePromptText}
+                  onChange={(e) => setNegativePromptText(e.target.value)}
+                  onFocus={() => setIsPromptFieldFocused(true)}
+                  onBlur={() => setIsPromptFieldFocused(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleGenerate(e)
+                    }
+                  }}
+                  placeholder="Negative prompt"
+                  className="w-full px-4 py-3 bg-white border border-slate-300 text-slate-900 placeholder-slate-500 rounded-lg focus:outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10 resize-none text-sm"
+                  rows="2"
+                  disabled={isLoading}
+                />
+              </div>
             )}
-            <button
-              type="submit"
-              disabled={isLoading || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
-              title={isLoading ? 'Generating...' : 'Generate image'}
-              aria-label={isLoading ? 'Generating image' : 'Generate image'}
-            >
-              <span>{isLoading ? 'Generating' : 'Generate'}</span>
-            </button>
+            <div className="mt-3 flex justify-end gap-2">
+              {isLoading && (
+                <button
+                  type="button"
+                  onClick={handleCancelRun}
+                  className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-100 rounded-md hover:bg-red-200 transition-colors"
+                  title={currentPromptId ? `Cancel ${currentPromptId}` : 'Cancel current run'}
+                >
+                  Cancel
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={isLoading || !hasConfiguredApiUrl || !hasConfiguredWorkflow}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium"
+                title={isLoading ? 'Generating...' : 'Generate image'}
+                aria-label={isLoading ? 'Generating image' : 'Generate image'}
+              >
+                <span>{isLoading ? 'Generating' : 'Generate'}</span>
+              </button>
+            </div>
+            {isPromptFieldFocused && (
+              <p className="hidden md:block text-right text-xs text-slate-500 mt-2">
+                Press <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-[11px] font-mono">Enter</kbd> to send, <kbd className="px-1.5 py-0.5 bg-slate-100 rounded text-[11px] font-mono">Shift+Enter</kbd> for new line
+              </p>
+            )}
           </div>
-          <p className="text-center text-sm text-slate-500 mt-3">
-            Press <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Enter</kbd> to send, <kbd className="px-2 py-1 bg-slate-100 rounded text-xs font-mono">Shift+Enter</kbd> for new line
-          </p>
         </form>
-      </div>
-
-      <div className="mt-12 text-center text-sm text-slate-500">
-        <p>Connected to: <span className="font-mono text-slate-700">{apiUrl || 'Not configured'}</span></p>
       </div>
     </>
   )
