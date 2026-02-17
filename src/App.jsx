@@ -602,9 +602,9 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={renderHomePage()} />
-        <Route path="/jobs" element={renderJobsPage()} />
+        <Route path="/jobs" element={canCloseSettings ? renderJobsPage() : <Navigate to="/onboarding" replace />} />
         <Route path="/onboarding" element={renderOnboardingPage()} />
-        <Route path="/settings" element={renderSettingsPage()} />
+        <Route path="/settings" element={canCloseSettings ? renderSettingsPage() : <Navigate to="/onboarding" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {renderTemplateModals()}
