@@ -1,5 +1,9 @@
 # ComfyUI Frontend
 
+[![Build](https://github.com/danohn/comfy-frontend/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/danohn/comfy-frontend/actions/workflows/build.yml)
+[![Deploy to GitHub Pages](https://github.com/danohn/comfy-frontend/actions/workflows/deploy-pages.yml/badge.svg?branch=main)](https://github.com/danohn/comfy-frontend/actions/workflows/deploy-pages.yml)
+[![Release](https://github.com/danohn/comfy-frontend/actions/workflows/release.yml/badge.svg)](https://github.com/danohn/comfy-frontend/actions/workflows/release.yml)
+
 A React + Vite frontend for running ComfyUI workflows with guided onboarding, template browsing, prerequisite checks, server-side job history, and operations controls.
 
 ## Requirements
