@@ -7,11 +7,13 @@ import useGeneration from './hooks/useGeneration'
 
 const REMOTE_TEMPLATES_BASE_URL = 'https://raw.githubusercontent.com/Comfy-Org/workflow_templates/main/templates'
 const REMOTE_TEMPLATES_INDEX_URL = `${REMOTE_TEMPLATES_BASE_URL}/index.json`
+const EXCLUDED_TEMPLATE_TAGS = new Set(['api'])
 
 export default function App() {
   const navigate = useNavigate()
   const location = useLocation()
   const isSettingsRoute = location.pathname === '/settings'
+  const isOnboardingRoute = location.pathname === '/onboarding'
 
   const [promptText, setPromptText] = useState('')
   const [negativePromptText, setNegativePromptText] = useState('')
@@ -35,9 +37,14 @@ export default function App() {
   const [isLoadingServerData, setIsLoadingServerData] = useState(false)
   const [serverDataError, setServerDataError] = useState(null)
   const [templateSearch, setTemplateSearch] = useState('')
+  const [selectedTemplateCategory, setSelectedTemplateCategory] = useState('all')
+  const [templateModelFilter, setTemplateModelFilter] = useState('')
+  const [templateTagFilter, setTemplateTagFilter] = useState('')
+  const [templateSort, setTemplateSort] = useState('default')
+  const [selectedTemplateDetails, setSelectedTemplateDetails] = useState(null)
   const [applyingTemplateId, setApplyingTemplateId] = useState(null)
   const [modelCheckByTemplate, setModelCheckByTemplate] = useState({})
-  const [activePrereqTemplateId, setActivePrereqTemplateId] = useState(null)
+  const [selectedPrereqTemplateId, setSelectedPrereqTemplateId] = useState(null)
   const [modelInventory, setModelInventory] = useState(null)
   const [isLoadingModelInventory, setIsLoadingModelInventory] = useState(false)
   const [opsActionStatus, setOpsActionStatus] = useState(null)
@@ -49,6 +56,7 @@ export default function App() {
   const [isLoadingJobDetail, setIsLoadingJobDetail] = useState(false)
   const [jobDetailError, setJobDetailError] = useState(null)
   const [toast, setToast] = useState(null)
+  const [onboardingStep, setOnboardingStep] = useState(1)
   const jobPromptCacheRef = useRef({})
 
   const {
@@ -95,13 +103,13 @@ export default function App() {
     const hasSeenWelcome = localStorage.getItem('comfy_onboarding_seen') === '1'
     if (hasSeenWelcome) {
       setShowWelcome(false)
-      if (!isSettingsRoute) {
-        navigate('/settings', { replace: true })
+      if (!isOnboardingRoute && !isSettingsRoute) {
+        navigate('/onboarding', { replace: true })
       }
     } else {
-      setShowWelcome(!isSettingsRoute)
+      setShowWelcome(!isOnboardingRoute && !isSettingsRoute)
     }
-  }, [canCloseSettings, isSettingsRoute, navigate])
+  }, [canCloseSettings, isOnboardingRoute, isSettingsRoute, navigate])
 
   useEffect(() => {
     if (!hasConfiguredApiUrl) return
@@ -117,9 +125,9 @@ export default function App() {
   }, [apiUrl, hasConfiguredApiUrl, refreshQueue])
 
   useEffect(() => {
-    if (!isSettingsRoute || !hasConfiguredApiUrl) return
+    if ((!isSettingsRoute && !isOnboardingRoute) || !hasConfiguredApiUrl) return
     fetchServerData()
-  }, [isSettingsRoute, hasConfiguredApiUrl, apiUrl])
+  }, [isSettingsRoute, isOnboardingRoute, hasConfiguredApiUrl, apiUrl])
 
   useEffect(() => {
     const promptInfo = analyzeWorkflowPromptInputs(workflow)
@@ -158,12 +166,17 @@ export default function App() {
     return cleanPort ? `${cleanProtocol}://${cleanHost}:${cleanPort}` : `${cleanProtocol}://${cleanHost}`
   }
 
-  useEffect(() => {
-    const parsed = parseApiUrlParts(settingsUrl)
+  function syncApiFieldsFromUrl(url) {
+    const parsed = parseApiUrlParts(url)
     setApiProtocol(parsed.protocol)
     setApiHost(parsed.host)
     setApiPort(parsed.port)
-  }, [settingsUrl])
+  }
+
+  useEffect(() => {
+    if (!isOnboardingRoute && !isSettingsRoute) return
+    syncApiFieldsFromUrl(settingsUrl)
+  }, [isOnboardingRoute, isSettingsRoute])
 
   useEffect(() => {
     if (!toast) return
@@ -240,13 +253,22 @@ export default function App() {
 
   function openSettingsPage() {
     setSettingsUrl(apiUrl)
+    syncApiFieldsFromUrl(apiUrl)
     navigate('/settings')
+  }
+
+  function openOnboardingPage() {
+    setSettingsUrl(apiUrl)
+    syncApiFieldsFromUrl(apiUrl)
+    navigate('/onboarding')
   }
 
   function handleStartOnboarding() {
     localStorage.setItem('comfy_onboarding_seen', '1')
     setShowWelcome(false)
-    navigate('/settings')
+    setOnboardingStep(1)
+    syncApiFieldsFromUrl(apiUrl)
+    navigate('/onboarding')
   }
 
   function showToast(message, type = 'success') {
@@ -266,6 +288,17 @@ export default function App() {
       host: nextHost,
       port: nextPort,
     }))
+  }
+
+  function saveApiSettings() {
+    const saveResult = saveApiUrl(settingsUrl)
+    if (!saveResult.ok) {
+      setError(saveResult.error)
+      return false
+    }
+    setError(null)
+    showToast('Settings saved')
+    return true
   }
 
   async function handleWorkflowUpload(e) {
@@ -318,6 +351,21 @@ export default function App() {
           description: extra.description || '',
           mediaType: extra.mediaType || 'unknown',
           tags: Array.isArray(extra.tags) ? extra.tags : [],
+          models: Array.isArray(extra.models) ? extra.models : [],
+          openSource: extra.openSource,
+          usage: typeof extra.usage === 'number' ? extra.usage : 0,
+          date: typeof extra.date === 'string' ? extra.date : '',
+          io: extra.io && typeof extra.io === 'object' ? extra.io : null,
+          tutorialUrl: typeof extra.tutorialUrl === 'string' ? extra.tutorialUrl : '',
+          requiresCustomNodes: Array.isArray(extra.requiresCustomNodes) ? extra.requiresCustomNodes : [],
+          includeOnDistributions: Array.isArray(extra.includeOnDistributions) ? extra.includeOnDistributions : [],
+          searchRank: typeof extra.searchRank === 'number' ? extra.searchRank : undefined,
+          size: typeof extra.size === 'number' ? extra.size : undefined,
+          vram: typeof extra.vram === 'number' ? extra.vram : undefined,
+          status: typeof extra.status === 'string' ? extra.status : '',
+          category: extra.category || 'Templates',
+          categoryGroup: extra.categoryGroup || 'Templates',
+          isEssential: Boolean(extra.isEssential),
           thumbnailUrl: extra.thumbnailUrl || null,
           workflowUrl: null,
           workflow: workflowData,
@@ -338,6 +386,20 @@ export default function App() {
             description: item.description || '',
             mediaType: item.mediaType || item.type || 'unknown',
             tags: item.tags,
+            models: item.models,
+            openSource: item.openSource,
+            usage: item.usage,
+            date: item.date,
+            io: item.io,
+            tutorialUrl: item.tutorialUrl,
+            requiresCustomNodes: item.requiresCustomNodes,
+            includeOnDistributions: item.includeOnDistributions,
+            searchRank: item.searchRank,
+            size: item.size,
+            vram: item.vram,
+            status: item.status,
+            category: groupKey,
+            categoryGroup: 'Custom',
           })
         }
       } else if (groupValue && typeof groupValue === 'object') {
@@ -350,6 +412,20 @@ export default function App() {
             description: templateValue.description || '',
             mediaType: templateValue.mediaType || templateValue.type || 'unknown',
             tags: templateValue.tags,
+            models: templateValue.models,
+            openSource: templateValue.openSource,
+            usage: templateValue.usage,
+            date: templateValue.date,
+            io: templateValue.io,
+            tutorialUrl: templateValue.tutorialUrl,
+            requiresCustomNodes: templateValue.requiresCustomNodes,
+            includeOnDistributions: templateValue.includeOnDistributions,
+            searchRank: templateValue.searchRank,
+            size: templateValue.size,
+            vram: templateValue.vram,
+            status: templateValue.status,
+            category: groupKey,
+            categoryGroup: 'Custom',
           })
         }
       }
@@ -368,6 +444,10 @@ export default function App() {
       const sectionTemplates = Array.isArray(section.templates) ? section.templates : []
       for (const template of sectionTemplates) {
         if (!template || typeof template !== 'object') continue
+        const tags = Array.isArray(template.tags) ? template.tags : []
+        const hasExcludedTag = tags.some((tag) => EXCLUDED_TEMPLATE_TAGS.has(String(tag || '').trim().toLowerCase()))
+        const isApiBased = hasExcludedTag || template.openSource === false
+        if (isApiBased) continue
         const name = template.name
         if (!name || typeof name !== 'string') continue
         const displayName = template.title || template.name
@@ -378,7 +458,22 @@ export default function App() {
           title: displayName,
           description: template.description || '',
           mediaType: template.mediaType || section.type || 'unknown',
-          tags: Array.isArray(template.tags) ? template.tags : [],
+          tags,
+          models: Array.isArray(template.models) ? template.models : [],
+          openSource: template.openSource,
+          usage: typeof template.usage === 'number' ? template.usage : 0,
+          date: typeof template.date === 'string' ? template.date : '',
+          io: template.io && typeof template.io === 'object' ? template.io : null,
+          tutorialUrl: typeof template.tutorialUrl === 'string' ? template.tutorialUrl : '',
+          requiresCustomNodes: Array.isArray(template.requiresCustomNodes) ? template.requiresCustomNodes : [],
+          includeOnDistributions: Array.isArray(template.includeOnDistributions) ? template.includeOnDistributions : [],
+          searchRank: typeof template.searchRank === 'number' ? template.searchRank : undefined,
+          size: typeof template.size === 'number' ? template.size : undefined,
+          vram: typeof template.vram === 'number' ? template.vram : undefined,
+          status: typeof template.status === 'string' ? template.status : '',
+          category: sectionTitle,
+          categoryGroup: section.category || 'Templates',
+          isEssential: Boolean(section.isEssential),
           thumbnailUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}-1.${encodeURIComponent(mediaSubtype)}`,
           source,
           workflowUrl: `${templatesBaseUrl}/${encodeURIComponent(name)}.json`,
@@ -668,7 +763,6 @@ export default function App() {
     const template = serverTemplates.find((entry) => entry.id === templateId)
     if (!template) return
 
-    setActivePrereqTemplateId(templateId)
     setModelCheckByTemplate((current) => ({
       ...current,
       [templateId]: { loading: true, error: null, missing: [], available: 0, total: 0 },
@@ -730,36 +824,20 @@ export default function App() {
     setIsCheckingWorkflowHealth(true)
     setWorkflowHealth(null)
     try {
-      const baseUrl = normalizeBaseUrl(apiUrl)
-      const res = await fetch(`${baseUrl}/object_info`)
-      if (!res.ok) {
-        throw new Error(`Validation request failed: ${res.status}`)
-      }
-      const objectInfo = await res.json()
-      const classesInWorkflow = Array.from(
-        new Set(
-          Object.values(workflowData)
-            .map((node) => node?.class_type)
-            .filter((classType) => typeof classType === 'string')
-        )
-      )
-      const missingClasses = classesInWorkflow.filter((classType) => !(classType in objectInfo))
       const prereq = await evaluateWorkflowPrerequisites(workflowData)
 
-      const ok = missingClasses.length === 0 && prereq.missing.length === 0
-      let message = 'Workflow is compatible and prerequisites are satisfied.'
-      if (missingClasses.length > 0 && prereq.missing.length > 0) {
-        message = `Missing node classes (${missingClasses.length}) and missing models (${prereq.missing.length}).`
-      } else if (missingClasses.length > 0) {
-        message = `Missing node classes: ${missingClasses.join(', ')}`
-      } else if (prereq.missing.length > 0) {
+      const ok = prereq.missing.length === 0
+      let message = 'Workflow prerequisites are satisfied.'
+      if (prereq.missing.length > 0) {
         message = `Missing models: ${prereq.missing.length} of ${prereq.total}`
+      } else if (prereq.total === 0) {
+        message = 'No explicit model prerequisites declared in this workflow.'
       }
 
       setWorkflowHealth({
         ok,
         message,
-        missingClasses,
+        missingClasses: [],
         ...prereq,
       })
     } catch (err) {
@@ -1058,17 +1136,20 @@ export default function App() {
   }
 
   function handleSaveSettings() {
-    const saveResult = saveApiUrl(settingsUrl)
-    if (!saveResult.ok) {
-      setError(saveResult.error)
-      return
-    }
+    saveApiSettings()
+  }
+
+  function handleOnboardingSaveAndContinue() {
+    if (!saveApiSettings()) return
+    setOnboardingStep(2)
+  }
+
+  function handleOnboardingFinish() {
     if (!hasConfiguredWorkflow) {
-      setError('Please upload a workflow JSON or use the sample workflow before continuing')
+      setError('Please upload a workflow JSON or use the sample workflow before finishing setup')
       return
     }
     setError(null)
-    showToast('Settings saved')
     navigate('/')
   }
 
@@ -1183,7 +1264,7 @@ export default function App() {
                 {!canCloseSettings && (
                   <button
                     type="button"
-                    onClick={openSettingsPage}
+                    onClick={openOnboardingPage}
                     className="px-3 py-1.5 text-xs font-medium text-white bg-slate-900 rounded-md hover:bg-slate-800 transition-colors"
                   >
                     Complete Setup
@@ -1444,23 +1525,92 @@ export default function App() {
 
   function renderSettingsPage() {
     const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
-    const canSaveSettings = isApiDirty || !canCloseSettings
+    const canSaveSettings = isApiDirty
     const normalizedQuery = templateSearch.trim().toLowerCase()
-    const filteredTemplates = normalizedQuery
-      ? serverTemplates.filter((template) => {
-        const haystack = [
-          template.title,
-          template.label,
-          template.description,
-          ...(Array.isArray(template.tags) ? template.tags : []),
-          template.mediaType,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        return haystack.includes(normalizedQuery)
+    const sidebarCategories = (() => {
+      const groups = new Map()
+      for (const template of serverTemplates) {
+        const groupName = template.categoryGroup || 'Templates'
+        const categoryName = template.category || 'Templates'
+        if (!groups.has(groupName)) groups.set(groupName, new Set())
+        groups.get(groupName).add(categoryName)
+      }
+      return Array.from(groups.entries())
+        .map(([groupName, set]) => ({
+          groupName,
+          categories: Array.from(set).sort((a, b) => a.localeCompare(b)),
+        }))
+        .sort((a, b) => a.groupName.localeCompare(b.groupName))
+    })()
+    const availableTemplateModels = Array.from(
+      new Set(
+        serverTemplates.flatMap((template) =>
+          Array.isArray(template.models) ? template.models : []
+        )
+      )
+    ).sort((a, b) => a.localeCompare(b))
+    const availableTemplateTags = Array.from(
+      new Set(
+        serverTemplates.flatMap((template) =>
+          Array.isArray(template.tags) ? template.tags : []
+        )
+      )
+    ).sort((a, b) => a.localeCompare(b))
+    const filteredTemplates = (() => {
+      let list = [...serverTemplates]
+
+      if (selectedTemplateCategory !== 'all' && selectedTemplateCategory !== 'popular') {
+        list = list.filter((template) => (template.category || 'Templates') === selectedTemplateCategory)
+      }
+      if (templateModelFilter) {
+        list = list.filter((template) => (template.models || []).includes(templateModelFilter))
+      }
+      if (templateTagFilter) {
+        list = list.filter((template) => (template.tags || []).includes(templateTagFilter))
+      }
+      if (normalizedQuery) {
+        list = list.filter((template) => {
+          const haystack = [
+            template.title,
+            template.label,
+            template.description,
+            ...(Array.isArray(template.tags) ? template.tags : []),
+            ...(Array.isArray(template.models) ? template.models : []),
+            template.mediaType,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          return haystack.includes(normalizedQuery)
+        })
+      }
+
+      const effectiveSort = selectedTemplateCategory === 'popular' ? 'popular' : templateSort
+      list.sort((a, b) => {
+        if (effectiveSort === 'popular') {
+          return (b.usage || 0) - (a.usage || 0)
+        }
+        if (effectiveSort === 'newest') {
+          const aTime = a.date ? new Date(a.date).getTime() : 0
+          const bTime = b.date ? new Date(b.date).getTime() : 0
+          return bTime - aTime
+        }
+        if (effectiveSort === 'alphabetical') {
+          return String(a.title || a.label || '').localeCompare(String(b.title || b.label || ''))
+        }
+        const usageDiff = (b.usage || 0) - (a.usage || 0)
+        if (usageDiff !== 0) return usageDiff
+        return String(a.title || a.label || '').localeCompare(String(b.title || b.label || ''))
       })
-      : serverTemplates
+
+      return list
+    })()
+    const selectedPrereqTemplate = selectedPrereqTemplateId
+      ? serverTemplates.find((template) => template.id === selectedPrereqTemplateId) || null
+      : null
+    const selectedPrereqResult = selectedPrereqTemplateId
+      ? modelCheckByTemplate[selectedPrereqTemplateId]
+      : null
     const featureEntries = (() => {
       if (!serverFeatures || typeof serverFeatures !== 'object') return []
       const rows = []
@@ -1619,7 +1769,7 @@ export default function App() {
                   disabled={!canSaveSettings}
                   className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {canCloseSettings ? 'Save' : 'Save and Continue'}
+                  Save API
                 </button>
               </div>
               {connectionStatus && (
@@ -1656,7 +1806,7 @@ export default function App() {
                 disabled={isCheckingWorkflowHealth || !hasConfiguredWorkflow}
                 className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50"
               >
-                {isCheckingWorkflowHealth ? 'Checking workflow health...' : 'Check Workflow Health (/object_info + prerequisites)'}
+                {isCheckingWorkflowHealth ? 'Checking prerequisites...' : 'Check Prerequisites'}
               </button>
               {workflowHealth && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1664,11 +1814,6 @@ export default function App() {
                   <p className={`text-xs mt-1 ${workflowHealth.ok ? 'text-green-700' : 'text-amber-700'}`}>
                     {workflowHealth.message}
                   </p>
-                  {Array.isArray(workflowHealth.missingClasses) && workflowHealth.missingClasses.length > 0 && (
-                    <p className="text-xs text-red-700 mt-1 break-words">
-                      Missing classes: {workflowHealth.missingClasses.join(', ')}
-                    </p>
-                  )}
                   {workflowHealth.total > 0 && (
                     <p className={`text-xs mt-1 ${workflowHealth.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
                       {workflowHealth.missing.length === 0
@@ -1723,13 +1868,6 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
-                <input
-                  type="text"
-                  value={templateSearch}
-                  onChange={(e) => setTemplateSearch(e.target.value)}
-                  placeholder="Search templates by name, tag, or description"
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
-                />
                 <p className="text-xs text-slate-500 mt-1">
                   {serverTemplates.length > 0
                     ? templateSource === 'local-index'
@@ -1739,124 +1877,233 @@ export default function App() {
                       : `${serverTemplates.length} templates available from server`
                     : 'No templates available from server or remote index'}
                 </p>
-                {filteredTemplates.length > 0 ? (
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[34rem] overflow-y-auto pr-1">
-                    {filteredTemplates.map((template) => (
-                      <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-                        {template.thumbnailUrl ? (
-                          <img
-                            src={template.thumbnailUrl}
-                            alt={template.title || template.label}
-                            className="w-full h-32 object-cover bg-slate-100"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
-                        )}
-                        <div className="p-3">
-                          <p className="text-sm font-semibold text-slate-900 line-clamp-2">{template.title || template.label}</p>
-                          <p className="text-xs text-slate-500 mt-1 line-clamp-2">
-                            {template.description || 'No description provided'}
-                          </p>
-                          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-600">
-                            <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
-                              {template.mediaType || 'unknown'}
-                            </span>
-                            {Array.isArray(template.tags) && template.tags.length > 0 && (
-                              <span className="truncate">{template.tags.slice(0, 2).join(', ')}</span>
-                            )}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => applyTemplate(template.id)}
-                            disabled={applyingTemplateId === template.id}
-                            className="mt-3 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
-                          >
-                            {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (activePrereqTemplateId === template.id) {
-                                setActivePrereqTemplateId(null)
-                              } else {
-                                checkTemplateModels(template.id)
-                              }
-                            }}
-                            disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
-                            className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
-                          >
-                            {modelCheckByTemplate[template.id]?.loading
-                              ? 'Checking prerequisites...'
-                              : isLoadingModelInventory
-                                ? 'Loading model inventory...'
-                                : activePrereqTemplateId === template.id
-                                  ? 'Hide Prerequisites'
-                                  : 'Check Prerequisites'}
-                          </button>
-                          {activePrereqTemplateId === template.id && modelCheckByTemplate[template.id]?.error && (
-                            <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
-                          )}
-                          {activePrereqTemplateId === template.id && modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
-                            <div className="mt-2">
-                              <p className={`text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
-                                {modelCheckByTemplate[template.id].missing.length === 0
-                                  ? `All ${modelCheckByTemplate[template.id].total} required models are available`
-                                  : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required models`}
-                              </p>
-                              {modelCheckByTemplate[template.id].missing.length > 0 && (
-                                <div className="mt-2 space-y-2">
-                                  {modelCheckByTemplate[template.id].missing.map((model) => (
-                                    <div key={`${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-2">
-                                      <p className="text-xs text-slate-700 break-all">
-                                        {(model.directory || 'unknown')} / {model.name}
-                                      </p>
-                                      <div className="mt-1 flex gap-2">
-                                        {model.url ? (
-                                          <>
-                                            <a
-                                              href={model.url}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
-                                            >
-                                              Download
-                                            </a>
-                                            <button
-                                              type="button"
-                                              onClick={async () => {
-                                                if (!model.url) return
-                                                try {
-                                                  await navigator.clipboard.writeText(model.url)
-                                                  setError('Model URL copied to clipboard')
-                                                } catch (_) {
-                                                  setError('Failed to copy model URL')
-                                                }
-                                              }}
-                                              className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
-                                            >
-                                              Copy URL
-                                            </button>
-                                          </>
-                                        ) : (
-                                          <span className="text-xs text-slate-500">No download URL provided</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                <div className="mt-3 border border-slate-200 rounded-xl bg-white overflow-hidden">
+                  <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] min-h-[520px]">
+                    <aside className="border-r border-slate-200 p-3 bg-slate-50">
+                      <p className="text-sm font-semibold text-slate-900 mb-2">Templates</p>
+                      <div className="space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTemplateCategory('all')}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                            selectedTemplateCategory === 'all'
+                              ? 'bg-slate-200 text-slate-900 font-medium'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          All Templates
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTemplateCategory('popular')}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                            selectedTemplateCategory === 'popular'
+                              ? 'bg-slate-200 text-slate-900 font-medium'
+                              : 'text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          Popular
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {sidebarCategories.map((group) => (
+                          <div key={group.groupName}>
+                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                              {group.groupName}
+                            </p>
+                            <div className="space-y-1">
+                              {group.categories.map((categoryName) => (
+                                <button
+                                  key={`${group.groupName}:${categoryName}`}
+                                  type="button"
+                                  onClick={() => setSelectedTemplateCategory(categoryName)}
+                                  className={`w-full text-left px-3 py-2 rounded-lg text-sm ${
+                                    selectedTemplateCategory === categoryName
+                                      ? 'bg-slate-200 text-slate-900 font-medium'
+                                      : 'text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {categoryName}
+                                </button>
+                              ))}
                             </div>
-                          )}
+                          </div>
+                        ))}
+                      </div>
+                    </aside>
+
+                    <div className="p-4 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <input
+                          type="text"
+                          value={templateSearch}
+                          onChange={(e) => setTemplateSearch(e.target.value)}
+                          placeholder="Search templates"
+                          className="min-w-[240px] flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTemplateSearch('')
+                            setTemplateModelFilter('')
+                            setTemplateTagFilter('')
+                            setTemplateSort('default')
+                          }}
+                          className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200"
+                        >
+                          Clear Filters
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                        <select
+                          value={templateModelFilter}
+                          onChange={(e) => setTemplateModelFilter(e.target.value)}
+                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                        >
+                          <option value="">Model Filter</option>
+                          {availableTemplateModels.map((model) => (
+                            <option key={`model:${model}`} value={model}>{model}</option>
+                          ))}
+                        </select>
+                        <select
+                          value={templateTagFilter}
+                          onChange={(e) => setTemplateTagFilter(e.target.value)}
+                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                        >
+                          <option value="">Tasks</option>
+                          {availableTemplateTags.map((tag) => (
+                            <option key={`tag:${tag}`} value={tag}>{tag}</option>
+                          ))}
+                        </select>
+                        <div className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 bg-slate-50">
+                          Runs On: ComfyUI
                         </div>
-                      </article>
-                    ))}
+                        <select
+                          value={selectedTemplateCategory === 'popular' ? 'popular' : templateSort}
+                          onChange={(e) => setTemplateSort(e.target.value)}
+                          disabled={selectedTemplateCategory === 'popular'}
+                          className="px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900 disabled:opacity-50"
+                        >
+                          <option value="default">Default</option>
+                          <option value="popular">Popular</option>
+                          <option value="newest">Newest</option>
+                          <option value="alphabetical">Alphabetical</option>
+                        </select>
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Showing {filteredTemplates.length} of {serverTemplates.length} templates
+                      </p>
+                      {filteredTemplates.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[32rem] overflow-y-auto pr-1">
+                          {filteredTemplates.map((template) => (
+                            <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col">
+                              {template.thumbnailUrl ? (
+                                <img
+                                  src={template.thumbnailUrl}
+                                  alt={template.title || template.label}
+                                  className="w-full h-32 object-cover bg-slate-100"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-32 bg-slate-100 border-b border-slate-200" />
+                              )}
+                              <div className="p-3 flex flex-col flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTemplateDetails(template)}
+                                  className="w-full text-left text-sm font-semibold text-slate-900 line-clamp-2 hover:underline"
+                                >
+                                  {template.title || template.label}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTemplateDetails(template)}
+                                  className="w-full text-left text-xs text-slate-500 mt-1 line-clamp-1 hover:text-slate-700 hover:underline"
+                                >
+                                  {template.description || 'No description provided'}
+                                </button>
+                                <p className="mt-2 text-[11px] text-slate-600">
+                                  {(template.category || template.mediaType || 'unknown')} · In:{' '}
+                                  {Array.isArray(template?.io?.inputs) && template.io.inputs.length > 0
+                                    ? Array.from(new Set(template.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                                    : (template.mediaType || 'unknown')}
+                                  {' '}· Out:{' '}
+                                  {Array.isArray(template?.io?.outputs) && template.io.outputs.length > 0
+                                    ? Array.from(new Set(template.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                                    : 'unknown'}
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-slate-600">
+                                  {Array.isArray(template.tags) && template.tags.length > 0 ? (
+                                    <>
+                                      {template.tags.slice(0, 2).map((tag) => (
+                                        <span key={`${template.id}:tag:${tag}`} className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200">
+                                          {tag}
+                                        </span>
+                                      ))}
+                                      {template.tags.length > 2 && (
+                                        <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-500">
+                                          +{template.tags.length - 2}
+                                        </span>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-500">No tags</span>
+                                  )}
+                                </div>
+                                <div className="mt-auto pt-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedTemplateDetails(template)}
+                                  className="w-full text-center text-[11px] text-slate-600 hover:text-slate-900 underline decoration-dotted"
+                                >
+                                  Details
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setSelectedPrereqTemplateId(template.id)
+                                    await checkTemplateModels(template.id)
+                                  }}
+                                  disabled={modelCheckByTemplate[template.id]?.loading || isLoadingModelInventory}
+                                  className="mt-2 w-full px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-60"
+                                >
+                                  {modelCheckByTemplate[template.id]?.loading
+                                    ? 'Checking prerequisites...'
+                                    : isLoadingModelInventory
+                                      ? 'Loading model inventory...'
+                                      : 'Check Prerequisites'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => applyTemplate(template.id)}
+                                  disabled={applyingTemplateId === template.id}
+                                  className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
+                                >
+                                  {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
+                                </button>
+                                {modelCheckByTemplate[template.id]?.error && (
+                                  <p className="mt-2 text-xs text-red-700 break-words">{modelCheckByTemplate[template.id].error}</p>
+                                )}
+                                {modelCheckByTemplate[template.id] && !modelCheckByTemplate[template.id]?.loading && !modelCheckByTemplate[template.id]?.error && (
+                                  <p className={`mt-2 text-xs ${modelCheckByTemplate[template.id].missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                                    {modelCheckByTemplate[template.id].missing.length === 0
+                                      ? 'All required models available'
+                                      : `${modelCheckByTemplate[template.id].missing.length} missing of ${modelCheckByTemplate[template.id].total} required`}
+                                  </p>
+                                )}
+                                </div>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500">
+                          {serverTemplates.length > 0 ? 'No templates match your filters.' : 'No templates loaded yet.'}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  <p className="mt-3 text-xs text-slate-500">
-                    {serverTemplates.length > 0 ? 'No templates match your search.' : 'No templates loaded yet.'}
-                  </p>
-                )}
+                </div>
               </div>
             </section>
 
@@ -2028,6 +2275,471 @@ export default function App() {
               )}
             </section>
 
+            {selectedTemplateDetails && (
+              <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-slate-900">
+                        {selectedTemplateDetails.title || selectedTemplateDetails.label}
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {selectedTemplateDetails.categoryGroup || 'Templates'} / {selectedTemplateDetails.category || 'General'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTemplateDetails(null)}
+                      className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {selectedTemplateDetails.thumbnailUrl && (
+                    <img
+                      src={selectedTemplateDetails.thumbnailUrl}
+                      alt={selectedTemplateDetails.title || selectedTemplateDetails.label}
+                      className="mt-4 w-full h-48 object-cover rounded-lg border border-slate-200 bg-slate-100"
+                    />
+                  )}
+
+                  <div className="mt-4 space-y-3 text-sm text-slate-700">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Description</p>
+                      <p className="mt-1 whitespace-pre-wrap break-words">
+                        {selectedTemplateDetails.description || 'No description provided'}
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Generation Type</p>
+                        <p className="mt-1">{selectedTemplateDetails.category || selectedTemplateDetails.mediaType || 'unknown'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Input Type</p>
+                        <p className="mt-1">
+                          {Array.isArray(selectedTemplateDetails?.io?.inputs) && selectedTemplateDetails.io.inputs.length > 0
+                            ? Array.from(new Set(selectedTemplateDetails.io.inputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                            : (selectedTemplateDetails.mediaType || 'unknown')}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Output Type</p>
+                        <p className="mt-1">
+                          {Array.isArray(selectedTemplateDetails?.io?.outputs) && selectedTemplateDetails.io.outputs.length > 0
+                            ? Array.from(new Set(selectedTemplateDetails.io.outputs.map((entry) => entry?.mediaType).filter(Boolean))).join(', ')
+                            : 'unknown'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Source</p>
+                        <p className="mt-1">{selectedTemplateDetails.source || 'unknown'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</p>
+                        <p className="mt-1">{selectedTemplateDetails.date || 'unknown'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Usage</p>
+                        <p className="mt-1">{typeof selectedTemplateDetails.usage === 'number' ? selectedTemplateDetails.usage : 'unknown'}</p>
+                      </div>
+                    </div>
+
+                    {Array.isArray(selectedTemplateDetails.models) && selectedTemplateDetails.models.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Models</p>
+                        <p className="mt-1 break-words">{selectedTemplateDetails.models.join(', ')}</p>
+                      </div>
+                    )}
+
+                    {Array.isArray(selectedTemplateDetails.tags) && selectedTemplateDetails.tags.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tags</p>
+                        <p className="mt-1 break-words">{selectedTemplateDetails.tags.join(', ')}</p>
+                      </div>
+                    )}
+
+                    {Array.isArray(selectedTemplateDetails.requiresCustomNodes) && selectedTemplateDetails.requiresCustomNodes.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Required Custom Nodes</p>
+                        <p className="mt-1 break-words">{selectedTemplateDetails.requiresCustomNodes.join(', ')}</p>
+                      </div>
+                    )}
+
+                    {selectedTemplateDetails.tutorialUrl && (
+                      <div>
+                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tutorial URL</p>
+                        <a
+                          href={selectedTemplateDetails.tutorialUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-1 inline-block text-slate-900 underline break-all"
+                        >
+                          {selectedTemplateDetails.tutorialUrl}
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedPrereqTemplate && (
+              <div className="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-xl max-h-[85vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-semibold text-slate-900">Prerequisites</h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {selectedPrereqTemplate.title || selectedPrereqTemplate.label}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPrereqTemplateId(null)}
+                      className="px-2 py-1 text-sm rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {!selectedPrereqResult || selectedPrereqResult.loading ? (
+                    <p className="mt-4 text-sm text-slate-600">Checking prerequisites...</p>
+                  ) : selectedPrereqResult.error ? (
+                    <p className="mt-4 text-sm text-red-700 break-words">{selectedPrereqResult.error}</p>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      <p className={`text-sm ${selectedPrereqResult.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                        {selectedPrereqResult.missing.length === 0
+                          ? `All ${selectedPrereqResult.total} required models are available`
+                          : `${selectedPrereqResult.missing.length} missing of ${selectedPrereqResult.total} required models`}
+                      </p>
+                      {selectedPrereqResult.missing.length > 0 && (
+                        <div className="space-y-2">
+                          {selectedPrereqResult.missing.map((model) => (
+                            <div key={`modal:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-slate-50 p-3">
+                              <p className="text-sm text-slate-700 break-all">
+                                {(model.directory || 'unknown')} / {model.name}
+                              </p>
+                              <div className="mt-2 flex gap-2">
+                                {model.url ? (
+                                  <>
+                                    <a
+                                      href={model.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
+                                    >
+                                      Download
+                                    </a>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        if (!model.url) return
+                                        try {
+                                          await navigator.clipboard.writeText(model.url)
+                                          setError('Model URL copied to clipboard')
+                                        } catch (_) {
+                                          setError('Failed to copy model URL')
+                                        }
+                                      }}
+                                      className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
+                                    >
+                                      Copy URL
+                                    </button>
+                                  </>
+                                ) : (
+                                  <span className="text-xs text-slate-500">No download URL provided</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderOnboardingPage() {
+    const isApiDirty = normalizeBaseUrl(settingsUrl) !== normalizeBaseUrl(apiUrl)
+    const canGoToWorkflowStep = hasConfiguredApiUrl
+    const normalizedQuery = templateSearch.trim().toLowerCase()
+    const filteredTemplates = normalizedQuery
+      ? serverTemplates.filter((template) => {
+        const haystack = [
+          template.title,
+          template.label,
+          template.description,
+          ...(Array.isArray(template.tags) ? template.tags : []),
+          template.mediaType,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return haystack.includes(normalizedQuery)
+      })
+      : serverTemplates
+
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-900">
+        <div className="max-w-4xl mx-auto px-6 py-10">
+          <div className="bg-white border border-slate-200 rounded-xl p-6 space-y-6">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-semibold">Getting Started</h1>
+                <p className="text-sm text-slate-600 mt-1">Step {onboardingStep} of 2</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOnboardingStep(1)}
+                  disabled={onboardingStep === 1}
+                  className="px-3 py-2 text-sm rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnboardingStep(2)}
+                  disabled={!canGoToWorkflowStep || onboardingStep === 2}
+                  className="px-3 py-2 text-sm rounded-lg bg-slate-100 text-slate-800 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  →
+                </button>
+              </div>
+            </div>
+
+            {onboardingStep === 1 ? (
+              <section className="space-y-4">
+                <h2 className="text-xl font-semibold">Connect to ComfyUI</h2>
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700">Host or IP</label>
+                  <input
+                    type="text"
+                    value={apiHost}
+                    onChange={(e) => updateApiSettings({ host: e.target.value })}
+                    placeholder="10.18.20.10 or comfy.local"
+                    className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
+                  />
+                  <p className="text-xs text-slate-500">
+                    Default connection uses <span className="font-mono">http</span> on port <span className="font-mono">8188</span>.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedApi((current) => !current)}
+                    className="text-xs px-2 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                  >
+                    {showAdvancedApi ? 'Hide Advanced URL Options' : 'Show Advanced URL Options'}
+                  </button>
+                  {showAdvancedApi && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Protocol</label>
+                          <select
+                            value={apiProtocol}
+                            onChange={(e) => updateApiSettings({ protocol: e.target.value })}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                          >
+                            <option value="http">http</option>
+                            <option value="https">https</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 mb-1">Port</label>
+                          <input
+                            type="text"
+                            value={apiPort}
+                            onChange={(e) => updateApiSettings({ port: e.target.value.replace(/[^0-9]/g, '') })}
+                            placeholder="8188"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    Resolved URL: <span className="font-mono">{settingsUrl || 'not set'}</span>
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={isTestingConnection}
+                    className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                  >
+                    {isTestingConnection ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOnboardingSaveAndContinue}
+                    className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 transition-colors"
+                  >
+                    Save and Continue →
+                  </button>
+                </div>
+                {connectionStatus && (
+                  <p className={`text-xs ${connectionStatus.type === 'success' ? 'text-green-700' : connectionStatus.type === 'error' ? 'text-red-700' : 'text-slate-500'}`}>
+                    {connectionStatus.message}
+                  </p>
+                )}
+                {isApiDirty && (
+                  <p className="text-xs text-slate-500">You have unsaved API changes.</p>
+                )}
+              </section>
+            ) : (
+              <section className="space-y-4">
+                <h2 className="text-xl font-semibold">Choose Workflow</h2>
+                <p className="text-sm text-slate-600">{hasConfiguredWorkflow ? `Selected: ${workflowName}` : 'No workflow selected yet'}</p>
+                <div className="flex gap-2">
+                  <label className="flex-1 px-3 py-2 bg-blue-100 text-blue-700 text-sm text-center rounded-lg font-medium cursor-pointer hover:bg-blue-200 transition-colors">
+                    Upload JSON
+                    <input type="file" accept=".json" onChange={handleWorkflowUpload} className="hidden" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleUseSampleWorkflow}
+                    className="flex-1 px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 transition-colors"
+                  >
+                    Use Sample
+                  </button>
+                </div>
+              <button
+                type="button"
+                onClick={() => runWorkflowHealthCheck()}
+                disabled={isCheckingWorkflowHealth || !hasConfiguredWorkflow}
+                className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 disabled:opacity-50"
+              >
+                {isCheckingWorkflowHealth ? 'Checking prerequisites...' : 'Check Prerequisites'}
+              </button>
+              {workflowHealth && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold text-slate-700">Workflow Prerequisites</p>
+                  <p className={`text-xs mt-1 ${workflowHealth.ok ? 'text-green-700' : 'text-amber-700'}`}>
+                    {workflowHealth.message}
+                  </p>
+                  {workflowHealth.total > 0 && (
+                    <p className={`text-xs mt-1 ${workflowHealth.missing.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+                      {workflowHealth.missing.length === 0
+                        ? `All ${workflowHealth.total} required models are available`
+                        : `${workflowHealth.missing.length} missing of ${workflowHealth.total} required models`}
+                    </p>
+                  )}
+                  {Array.isArray(workflowHealth.missing) && workflowHealth.missing.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {workflowHealth.missing.map((model) => (
+                        <div key={`onboarding-health:${model.directory}:${model.name}:${model.url}`} className="rounded border border-slate-200 bg-white p-2">
+                          <p className="text-xs text-slate-700 break-all">
+                            {(model.directory || 'unknown')} / {model.name}
+                          </p>
+                          <div className="mt-1 flex gap-2">
+                            {model.url ? (
+                              <>
+                                <a
+                                  href={model.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-900 text-white hover:bg-slate-800"
+                                >
+                                  Download
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (!model.url) return
+                                    try {
+                                      await navigator.clipboard.writeText(model.url)
+                                      setError('Model URL copied to clipboard')
+                                    } catch (_) {
+                                      setError('Failed to copy model URL')
+                                    }
+                                  }}
+                                  className="px-2 py-1 text-xs rounded-md bg-slate-200 text-slate-800 hover:bg-slate-300"
+                                >
+                                  Copy URL
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-500">No download URL provided</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">Server Templates</label>
+                  <input
+                    type="text"
+                    value={templateSearch}
+                    onChange={(e) => setTemplateSearch(e.target.value)}
+                    placeholder="Search templates by name, tag, or description"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 bg-white focus:outline-none focus:border-slate-900"
+                  />
+                  {filteredTemplates.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[28rem] overflow-y-auto pr-1">
+                      {filteredTemplates.map((template) => (
+                        <article key={template.id} className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                          {template.thumbnailUrl ? (
+                            <img
+                              src={template.thumbnailUrl}
+                              alt={template.title || template.label}
+                              className="w-full h-24 object-cover bg-slate-100"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="w-full h-24 bg-slate-100 border-b border-slate-200" />
+                          )}
+                          <div className="p-3">
+                            <p className="text-sm font-semibold text-slate-900 line-clamp-2">{template.title || template.label}</p>
+                            <button
+                              type="button"
+                              onClick={() => applyTemplate(template.id)}
+                              disabled={applyingTemplateId === template.id}
+                              className="mt-2 w-full px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-60"
+                            >
+                              {applyingTemplateId === template.id ? 'Applying...' : 'Apply Template'}
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-slate-500">No templates loaded yet.</p>
+                  )}
+                </div>
+                <div className="flex justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setOnboardingStep(1)}
+                    className="px-3 py-2 bg-slate-100 text-slate-800 text-sm rounded-lg font-medium hover:bg-slate-200 transition-colors"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOnboardingFinish}
+                    disabled={!hasConfiguredWorkflow}
+                    className="px-3 py-2 bg-slate-900 text-white text-sm rounded-lg font-medium hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Finish Setup
+                  </button>
+                </div>
+              </section>
+            )}
           </div>
         </div>
       </div>
@@ -2038,6 +2750,7 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={renderHomePage()} />
+        <Route path="/onboarding" element={renderOnboardingPage()} />
         <Route path="/settings" element={renderSettingsPage()} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
