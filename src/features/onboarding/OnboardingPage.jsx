@@ -69,7 +69,7 @@ export default function OnboardingPage({
                   type="text"
                   value={apiHost}
                   onChange={(e) => updateApiSettings({ host: e.target.value })}
-                  placeholder="10.18.20.10 or comfy.local"
+                  placeholder="192.168.1.100 or comfy.local"
                   className="w-full px-4 py-2 border border-slate-300 text-slate-900 rounded-lg focus:outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900 focus:ring-opacity-10"
                 />
                 <p className="text-xs text-slate-500">

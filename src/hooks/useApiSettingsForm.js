@@ -16,8 +16,11 @@ export default function useApiSettingsForm({ apiUrl, settingsUrl, setSettingsUrl
 
   useEffect(() => {
     if (!isOnboardingRoute && !isSettingsRoute) return
+    // Sync when entering an editable route, not on every keystroke-driven
+    // settingsUrl update, to avoid URL hostname normalization altering input.
     syncApiFieldsFromUrl(settingsUrl)
-  }, [isOnboardingRoute, isSettingsRoute, settingsUrl])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnboardingRoute, isSettingsRoute])
 
   function updateApiSettings(next) {
     const nextProtocol = next.protocol ?? apiProtocol
