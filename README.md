@@ -146,10 +146,30 @@ git push origin vX.Y.Z
 
 ## Project Structure
 
-- `src/App.jsx` route shell, settings UI, templates, dashboard, danger zone
-- `src/hooks/useApiConfig.js` API URL state, connection test, persistence
-- `src/hooks/useWorkflowConfig.js` workflow persistence and selection
-- `src/hooks/useGeneration.js` generation pipeline, websocket handling, queue and history interactions
+- `src/App.jsx` app shell and route orchestration
+- `src/features/onboarding` onboarding wizard pages
+- `src/features/settings` API/workflow/server ops settings UI
+- `src/features/templates` template browser, cards, and modals
+- `src/features/generation` generation form and runtime status UI
+- `src/features/history` server-backed recent jobs and job details UI
+- `src/features/home` home screen composition
+- `src/hooks` API/workflow/generation/template/admin state hooks
+- `src/lib` pure helpers and transforms (URLs, templates, models, formatting)
+
+## Architecture Notes
+
+The app is organized as a thin orchestration layer plus feature modules:
+
+1. `App.jsx` owns app-level state and wires hooks to pages/components.
+2. Feature components under `src/features/*` are mostly presentational and receive explicit props.
+3. Shared logic lives in hooks (`src/hooks/*`) and pure utility modules (`src/lib/*`).
+
+High-level flow:
+
+1. Onboarding/settings establish API connectivity and workflow selection.
+2. Generation uses the selected workflow + prompts and streams execution status over WebSocket.
+3. History and job details are fetched from server endpoints and rendered in dedicated history components.
+4. Templates are loaded from local/remote indexes, validated for prerequisites, and then applied into workflow state.
 
 ## Troubleshooting
 
