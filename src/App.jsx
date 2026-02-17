@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import defaultWorkflow from '../01_get_started_text_to_image.json'
 import useApiConfig from './hooks/useApiConfig'
+import useApiSettingsForm from './hooks/useApiSettingsForm'
+import useOnboardingFlow from './hooks/useOnboardingFlow'
 import useRecentJobs from './hooks/useRecentJobs'
 import useServerAdmin from './hooks/useServerAdmin'
 import useTemplates from './hooks/useTemplates'
@@ -13,7 +15,7 @@ import OnboardingPage from './features/onboarding/OnboardingPage'
 import SettingsPage from './features/settings/SettingsPage'
 import HomePage from './features/home/HomePage'
 import { getTemplateBrowserData } from './features/templates/templateBrowserData'
-import { buildApiUrlFromParts, normalizeBaseUrl, parseApiUrlParts } from './lib/apiUrl'
+import { normalizeBaseUrl } from './lib/apiUrl'
 import { analyzeWorkflowPromptInputs } from './lib/workflowPrompt'
 
 export default function App() {
@@ -25,17 +27,11 @@ export default function App() {
   const [promptText, setPromptText] = useState('')
   const [negativePromptText, setNegativePromptText] = useState('')
   const [promptInputMode, setPromptInputMode] = useState('single')
-  const [showWelcome, setShowWelcome] = useState(false)
-  const [apiHost, setApiHost] = useState('')
-  const [apiProtocol, setApiProtocol] = useState('http')
-  const [apiPort, setApiPort] = useState('8188')
-  const [showAdvancedApi, setShowAdvancedApi] = useState(false)
   const [workflowHealth, setWorkflowHealth] = useState(null)
   const [isCheckingWorkflowHealth, setIsCheckingWorkflowHealth] = useState(false)
   const [inputImageFile, setInputImageFile] = useState(null)
   const [inputImageName, setInputImageName] = useState('')
   const [toast, setToast] = useState(null)
-  const [onboardingStep, setOnboardingStep] = useState(1)
 
   const {
     apiUrl,
@@ -47,6 +43,22 @@ export default function App() {
     saveApiUrl,
     testConnection,
   } = useApiConfig()
+  const {
+    apiHost,
+    apiProtocol,
+    apiPort,
+    showAdvancedApi,
+    setShowAdvancedApi,
+    syncApiFieldsFromUrl,
+    updateApiSettings,
+    prepSettingsFromApi,
+  } = useApiSettingsForm({
+    apiUrl,
+    settingsUrl,
+    setSettingsUrl,
+    isSettingsRoute,
+    isOnboardingRoute,
+  })
 
   const {
     workflow,
@@ -134,23 +146,19 @@ export default function App() {
   })
 
   const canCloseSettings = hasConfiguredApiUrl && hasConfiguredWorkflow
-
-  useEffect(() => {
-    if (canCloseSettings) {
-      setShowWelcome(false)
-      return
-    }
-
-    const hasSeenWelcome = localStorage.getItem('comfy_onboarding_seen') === '1'
-    if (hasSeenWelcome) {
-      setShowWelcome(false)
-      if (!isOnboardingRoute && !isSettingsRoute) {
-        navigate('/onboarding', { replace: true })
-      }
-    } else {
-      setShowWelcome(!isOnboardingRoute && !isSettingsRoute)
-    }
-  }, [canCloseSettings, isOnboardingRoute, isSettingsRoute, navigate])
+  const {
+    showWelcome,
+    onboardingStep,
+    setOnboardingStep,
+    handleStartOnboarding,
+  } = useOnboardingFlow({
+    canCloseSettings,
+    isOnboardingRoute,
+    isSettingsRoute,
+    navigate,
+    apiUrl,
+    syncApiFieldsFromUrl,
+  })
 
   useEffect(() => {
     if (!hasConfiguredApiUrl) return
@@ -177,18 +185,6 @@ export default function App() {
     setNegativePromptText(promptInfo.defaultNegativePrompt)
   }, [workflow])
 
-  function syncApiFieldsFromUrl(url) {
-    const parsed = parseApiUrlParts(url)
-    setApiProtocol(parsed.protocol)
-    setApiHost(parsed.host)
-    setApiPort(parsed.port)
-  }
-
-  useEffect(() => {
-    if (!isOnboardingRoute && !isSettingsRoute) return
-    syncApiFieldsFromUrl(settingsUrl)
-  }, [isOnboardingRoute, isSettingsRoute])
-
   useEffect(() => {
     if (!toast) return
     const id = setTimeout(() => setToast(null), 2500)
@@ -196,42 +192,17 @@ export default function App() {
   }, [toast])
 
   function openSettingsPage() {
-    setSettingsUrl(apiUrl)
-    syncApiFieldsFromUrl(apiUrl)
+    prepSettingsFromApi()
     navigate('/settings')
   }
 
   function openOnboardingPage() {
-    setSettingsUrl(apiUrl)
-    syncApiFieldsFromUrl(apiUrl)
-    navigate('/onboarding')
-  }
-
-  function handleStartOnboarding() {
-    localStorage.setItem('comfy_onboarding_seen', '1')
-    setShowWelcome(false)
-    setOnboardingStep(1)
-    syncApiFieldsFromUrl(apiUrl)
+    prepSettingsFromApi()
     navigate('/onboarding')
   }
 
   function showToast(message, type = 'success') {
     setToast({ message, type })
-  }
-
-  function updateApiSettings(next) {
-    const nextProtocol = next.protocol ?? apiProtocol
-    const nextHost = next.host ?? apiHost
-    const nextPort = next.port ?? apiPort
-
-    setApiProtocol(nextProtocol)
-    setApiHost(nextHost)
-    setApiPort(nextPort)
-    setSettingsUrl(buildApiUrlFromParts({
-      protocol: nextProtocol,
-      host: nextHost,
-      port: nextPort,
-    }))
   }
 
   function saveApiSettings() {
